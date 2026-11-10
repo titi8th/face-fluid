@@ -88,6 +88,7 @@
         <li>화면 맨 위 <b>노란 점</b>을 5~6초 편하게 바라보면 자동으로 끝납니다. 정확히 맞출 필요 없습니다.</li>
         <li>자세가 벗어나면 화면과 음성으로 한 가지씩 알려 줍니다. 가장 중요한 건 <b>턱 높이</b>입니다. 오른쪽 세로 막대의 표시가 초록 구간에 있게 해 주세요.</li>
         <li>이마에 힘을 주지 말고 눈썹을 편하게 둡니다.</li>
+        <li>폰과 얼굴의 거리도 매번 비슷해야 합니다. "조금 더 가까이/멀리" 안내가 나오면 팔 길이를 조절하세요.</li>
         <li>가능하면 같은 장소·조명에서, 안경을 벗고, 머리카락이 볼과 턱선을 가리지 않게 합니다.</li>
       </ul>
     </details>
@@ -172,7 +173,7 @@ const MODEL_URL = LOCAL ? "./face_landmarker.task" : "https://storage.googleapis
 const { FaceLandmarker, FilesetResolver } = await import(LOCAL ? "./vision_bundle.mjs" : CDN + "/vision_bundle.mjs");
 
 /* ---------- constants ---------- */
-const VERSION = 4;
+const VERSION = 5;
 const IRIS_MM = 11.7;
 const FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
 const METRICS = [
@@ -187,8 +188,8 @@ const METRICS = [
   {key:"browLid",    label:"눈썹-윗눈꺼풀 (참고)",  unit:"mm"},
 ];
 // frame acceptance (loose) — the rest is corrected or filtered by scoring
-const ACC = {yaw:10, pitchDev:2, roll:15, sizeMin:18, sizeMax:75, center:22, browEx:0.15};
-if(QS.has("loose")) Object.assign(ACC,{yaw:90,pitchDev:90,roll:90,sizeMin:1,sizeMax:100,center:100,browEx:9});
+const ACC = {yaw:10, pitchDev:2, distDev:5, roll:15, sizeMin:18, sizeMax:75, center:22, browEx:0.15};
+if(QS.has("loose")) Object.assign(ACC,{yaw:90,pitchDev:90,distDev:500,roll:90,sizeMin:1,sizeMax:100,center:100,browEx:9});
 const WINDOW_MS = 6000, SEGMENTS = 3, MAX_MS = 25000;
 const LS_KEY = "face-fluid-live-v1";
 const $ = id => document.getElementById(id);
@@ -269,16 +270,17 @@ function analyzeLandmarks(res, W, H){
 function personalRef(){
   const b=cur().sort((a,b)=>a.ts-b.ts).slice(0,5);
   const med=k=>{ const v=b.map(r=>r.q[k]).filter(x=>x!=null&&isFinite(x)); return v.length?median(v):null; };
-  return { pitch:med("pitch"), jawOpen:med("jawOpen") ?? 0.05, smile:med("smile") ?? 0.05, browUp:med("browUp") ?? 0.1 };
+  return { pitch:med("pitch"), faceFrac:med("faceFrac"), jawOpen:med("jawOpen") ?? 0.05, smile:med("smile") ?? 0.05, browUp:med("browUp") ?? 0.1 };
 }
 let REF = personalRef();
 
 /* frame check: returns {accept, reason, score} */
-let lockFrames=[];
-function pitchTarget(){ if(REF.pitch!=null) return REF.pitch; return lockFrames.length>=10 ? median(lockFrames) : null; }
+let lockFrames=[];   // [{pitch, size}] from the first ~10 usable frames when there is no saved reference yet
+function pitchTarget(){ if(REF.pitch!=null) return REF.pitch; return lockFrames.length>=10 ? median(lockFrames.map(f=>f.pitch)) : null; }
+function sizeTarget(){ if(REF.faceFrac!=null) return REF.faceFrac; return lockFrames.length>=10 ? median(lockFrames.map(f=>f.size)) : null; }
 function check(A){
   const q=A.q;
-  if(REF.pitch==null && lockFrames.length<10 && Math.abs(q.yaw)<=ACC.yaw) lockFrames.push(q.pitch);
+  if((REF.pitch==null||REF.faceFrac==null) && lockFrames.length<10 && Math.abs(q.yaw)<=ACC.yaw && q.faceFrac>=ACC.sizeMin && q.faceFrac<=ACC.sizeMax) lockFrames.push({pitch:q.pitch, size:q.faceFrac});
   const tgt=pitchTarget(); const pitchDev = tgt!=null ? q.pitch-tgt : 0; A.pitchDev=pitchDev;
   const offC = Math.hypot(q.cxN-0.5, q.cyN-0.5)*100;
   if(q.faceFrac < ACC.sizeMin) return {accept:false, reason:"far"};
@@ -286,6 +288,9 @@ function check(A){
   if(offC > ACC.center) return {accept:false, reason:"center"};
   if(Math.abs(q.yaw) > ACC.yaw) return {accept:false, reason:"yaw"};
   if(tgt==null) return {accept:false, reason:"lock"};
+  const st=sizeTarget(); const distDev = st ? (q.faceFrac/st-1)*100 : 0; A.distDev=distDev;
+  if(distDev < -ACC.distDev) return {accept:false, reason:"far"};
+  if(distDev >  ACC.distDev) return {accept:false, reason:"near"};
   if(Math.abs(pitchDev) > ACC.pitchDev) return {accept:false, reason: pitchDev>0 ? "chinLow" : "chinHigh"};
   if(Math.abs(q.roll) > ACC.roll) return {accept:false, reason:"roll"};
   if(q.blink > 0.45) return {accept:false, reason:"blink"};
@@ -294,7 +299,7 @@ function check(A){
   if(jawEx>0) return {accept:false, reason:"mouth"};
   if(smEx>0) return {accept:false, reason:"smile"};
   if(q.browUp > REF.browUp + ACC.browEx) return {accept:false, reason:"brow"};
-  const score = Math.abs(q.yaw)/4 + Math.abs(pitchDev)/1 + Math.abs(q.roll)/10 + q.jawOpen*5 + q.smile*2 + q.blink;
+  const score = Math.abs(q.yaw)/4 + Math.abs(pitchDev)/1 + Math.abs(distDev)/3 + Math.abs(q.roll)/10 + q.jawOpen*5 + q.smile*2 + q.blink;
   return {accept:true, score};
 }
 const HINTS = { far:"폰을 조금 더 가까이", near:"폰을 조금 더 멀리", center:"얼굴을 원 가운데로", yaw:"고개를 돌리지 말고 정면으로",
