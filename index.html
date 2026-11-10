@@ -84,11 +84,10 @@
     <details>
       <summary>촬영 방법</summary>
       <ul>
-        <li>항상 같은 장소·조명에서, 폰을 <b>세로</b>로 들고 팔을 편 거리에서 찍습니다.</li>
-        <li>화면 맨 위 <b>노란 점</b>을 바라보고, 무표정으로 입을 다뭅니다.</li>
-        <li>얼굴을 <b>점선 윤곽</b>에 맞추고, 아래 막대가 모두 초록 구간에 들어가 1초 유지되면 자동 촬영됩니다.</li>
-        <li>첫 측정이 끝나면 그 얼굴 윤곽이 다음부터 가이드 선이 됩니다.</li>
-        <li>안경 벗기, 앞머리·옆머리로 볼과 턱선을 가리지 않기.</li>
+        <li>폰을 <b>세로</b>로 들고 팔을 편 거리에서, 얼굴이 큰 타원 안에 대략 들어오게 합니다.</li>
+        <li>화면 맨 위 <b>노란 점</b>을 5~6초 편하게 바라보면 자동으로 끝납니다. 정확히 맞출 필요 없습니다.</li>
+        <li>자세가 많이 벗어나면 화면과 음성으로 한 가지씩 알려 줍니다.</li>
+        <li>가능하면 같은 장소·조명에서, 안경을 벗고, 머리카락이 볼과 턱선을 가리지 않게 합니다.</li>
       </ul>
     </details>
   </div>
@@ -109,7 +108,7 @@
     <div class="btns">
       <button id="startBtn" disabled>카메라 켜고 측정 시작</button>
     </div>
-    <p class="note">한 번 측정할 때 자동으로 <b>3회</b> 촬영하고, 각 촬영은 약 1초간 영상 프레임의 중앙값을 씁니다.</p>
+    <p class="note">약 6초 동안 영상을 분석해 자세가 가장 바른 순간들을 골라 씁니다. 고개 각도는 3D로 보정합니다.</p>
   </div>
 
   <div class="card hidden" id="resultCard">
@@ -138,9 +137,6 @@
       <button class="ghost" id="shareBtn">CSV 보내기</button>
       <button class="ghost" id="dlBtn">CSV 내려받기</button>
     </div>
-    <div class="btns">
-      <button class="ghost small" id="resetGuide">가이드 윤곽 다시 정하기</button>
-    </div>
     <p class="note">기록은 이 폰의 이 브라우저에만 있습니다. 브라우저 데이터를 지우면 사라지니, 가끔 CSV로 보내 두세요.</p>
   </div>
   <p class="note">연구용 시제품입니다. 진단 목적으로 사용하지 마세요.</p>
@@ -151,16 +147,12 @@
     <video id="video" playsinline muted></video>
     <canvas id="overlay"></canvas>
     <div id="fix"></div>
-    <div id="hint">얼굴을 점선 안에 맞추세요</div>
+    <div id="hint">노란 점을 편하게 바라보세요</div>
   </div>
   <div id="panel">
-    <div class="g"><span>기울기</span><div class="track" id="t_roll"></div></div>
-    <div class="g"><span>좌우 돌림</span><div class="track" id="t_yaw"></div></div>
-    <div class="g"><span>위아래</span><div class="track" id="t_pitch"></div></div>
-    <div class="g"><span>거리</span><div class="track" id="t_dist"></div></div>
-    <div class="g"><span>위치</span><div class="track" id="t_pos"></div></div>
-    <div class="chips"><span class="chip" id="c_mouth">입 다물기</span><span class="chip" id="c_eye">눈 뜨기</span><span class="chip" id="c_face">무표정</span><span class="chip" id="c_shot">촬영 0/3</span></div>
-    <div id="camBtns"><button class="ghost" id="cancelCam">취소</button></div>
+    <div id="phase" style="font-size:14px;font-weight:600">얼굴을 원 안에 두고 노란 점을 바라보세요</div>
+    <div class="track" style="height:10px"><div id="prog" style="position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(124,196,138,.9);border-radius:6px"></div></div>
+    <div id="camBtns"><button class="ghost" id="voiceBtn">음성 안내 켬</button><button class="ghost" id="cancelCam">취소</button></div>
     <div id="diagLine" style="font-size:11px;opacity:.6"></div>
   </div>
 </section>
@@ -168,11 +160,13 @@
 
 <script type="module">
 const CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.2";
-const LOCAL = new URLSearchParams(location.search).has("local");
+const QS = new URLSearchParams(location.search);
+const LOCAL = QS.has("local");
 const MODEL_URL = LOCAL ? "./face_landmarker.task" : "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const { FaceLandmarker, FilesetResolver } = await import(LOCAL ? "./vision_bundle.mjs" : CDN + "/vision_bundle.mjs");
 
 /* ---------- constants ---------- */
+const VERSION = 4;
 const IRIS_MM = 11.7;
 const FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
 const METRICS = [
@@ -186,21 +180,22 @@ const METRICS = [
   {key:"eyeRatio",   label:"눈 높이/너비 (참고)",   unit:""},
   {key:"browLid",    label:"눈썹-윗눈꺼풀 (참고)",  unit:"mm"},
 ];
-// gate thresholds (|value| must be within)
-const GATE = {roll:2, yaw:3, pitch:3, dist:4, pos:4};   // °, °, ° vs guide, % size vs guide, % of width
-const SHOTS = 3, HOLD_MS = 1000;
-if(new URLSearchParams(location.search).has("loose")) Object.assign(GATE,{roll:90,yaw:90,pitch:90,dist:500,pos:500});
-const LS_KEY = "face-fluid-live-v1", LS_GUIDE = "face-fluid-live-guide-v1";
+// frame acceptance (loose) — the rest is corrected or filtered by scoring
+const ACC = {yaw:12, pitchDev:12, roll:15, sizeMin:18, sizeMax:75, center:22};
+if(QS.has("loose")) Object.assign(ACC,{yaw:90,pitchDev:90,roll:90,sizeMin:1,sizeMax:100,center:100});
+const WINDOW_MS = 6000, SEGMENTS = 3, MAX_MS = 25000;
+const LS_KEY = "face-fluid-live-v1";
 const $ = id => document.getElementById(id);
 
 /* ---------- utils ---------- */
 function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2400); }
 const d2=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const d3=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
 function polyArea(p){ let s=0; for(let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length]; s+=a.x*b.y-b.x*a.y;} return Math.abs(s)/2; }
 function clipBelow(pts,yL){ const o=[]; for(let i=0;i<pts.length;i++){ const A=pts[i],B=pts[(i+1)%pts.length], ai=A.y>=yL, bi=B.y>=yL; if(ai)o.push(A); if(ai!==bi){const t=(yL-A.y)/(B.y-A.y); o.push({x:A.x+t*(B.x-A.x),y:yL});} } return o; }
 const mean=a=>a.reduce((s,v)=>s+v,0)/a.length;
 const sd=a=>{const m=mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1));};
-function median(a){ const b=[...a].sort((x,y)=>x-y), n=b.length; return n%2?b[(n-1)/2]:(b[n/2-1]+b[n/2])/2; }
+function median(a){ const b=[...a].sort((x,y)=>x-y), n=b.length; return n?(n%2?b[(n-1)/2]:(b[n/2-1]+b[n/2])/2):null; }
 function fmt(v,dp=1){ return (v==null||!isFinite(v))?"–":v.toFixed(dp); }
 function fmtDate(ts){ const d=new Date(ts), p=n=>String(n).padStart(2,"0"); return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 const dpFor=k=>(k==="eyeRatio"||k==="fwhr")?3:1;
@@ -209,201 +204,211 @@ const AREA_KEYS=new Set(["faceArea","lowerArea"]), UNITLESS=new Set(["eyeRatio",
 /* ---------- storage ---------- */
 let records=[]; try{ records=JSON.parse(localStorage.getItem(LS_KEY)||"[]"); }catch(e){ records=[]; }
 function persist(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(records)); return true; }catch(e){ toast("저장 공간에 쓸 수 없습니다. CSV로 백업하세요."); return false; } }
-function loadGuide(){ try{ return JSON.parse(localStorage.getItem(LS_GUIDE)||"null"); }catch(e){ return null; } }
-function saveGuide(g){ try{ localStorage.setItem(LS_GUIDE, JSON.stringify(g)); }catch(e){} }
-let guide = loadGuide();   // {oval:[[x,y]...] normalized, cx,cy,size, pitch, aspect}
+const cur = () => records.filter(r=>(r.v||0)>=VERSION);
 
 /* ---------- engine ---------- */
-let lm=null, delegateName="", lastErr="", frameCount=0, faceCount=0, fpsT0=0;
+let lm=null, delegateName="", lastErr="";
 async function initEngine(){
   try{
     const fs = await FilesetResolver.forVisionTasks(LOCAL ? new URL("./wasm", location.href).href : CDN + "/wasm");
     const opts = d => ({ baseOptions:{ modelAssetPath: MODEL_URL, delegate:d }, runningMode:"VIDEO", numFaces:1, outputFaceBlendshapes:true, outputFacialTransformationMatrixes:true });
-    const wantGPU = new URLSearchParams(location.search).has("gpu");
-    if(wantGPU){ try{ lm = await FaceLandmarker.createFromOptions(fs, opts("GPU")); delegateName="GPU"; }catch(e){ lm=null; } }
-    if(!lm){ lm = await FaceLandmarker.createFromOptions(fs, opts("CPU")); delegateName="CPU"; }
-    $("status").innerHTML = "<b>준비 완료.</b> " + (guide ? "저장된 얼굴 윤곽을 가이드로 씁니다." : "첫 측정의 얼굴 윤곽이 다음부터 가이드가 됩니다.");
+    if(QS.has("gpu")){ try{ lm=await FaceLandmarker.createFromOptions(fs, opts("GPU")); delegateName="GPU"; }catch(e){ lm=null; } }
+    if(!lm){ lm=await FaceLandmarker.createFromOptions(fs, opts("CPU")); delegateName="CPU"; }
+    $("status").innerHTML = "<b>준비 완료.</b> 측정 시작을 누르고 노란 점을 5~6초 바라보면 끝납니다.";
     $("startBtn").disabled=false;
   }catch(e){ console.error(e); $("status").innerHTML="<b>분석 엔진을 불러오지 못했습니다.</b> 인터넷 연결을 확인하고 새로고침하세요. ("+(e&&e.message||e)+")"; }
 }
 
+let lastDetT=0;
+function detect(img){ let ts=performance.now(); if(ts<=lastDetT) ts=lastDetT+1; lastDetT=ts; return lm.detectForVideo(img, ts); }
 /* ---------- per-frame analysis ---------- */
 function eulerFromMatrix(m){ const d=m.data, r=(i,j)=>d[j*4+i], k=180/Math.PI;
   return {pitch:Math.atan2(r(2,1),r(2,2))*k, yaw:Math.asin(-Math.max(-1,Math.min(1,r(2,0))))*k}; }
-function analyzeLandmarks(res, W, H){
-  if(!res.faceLandmarks || !res.faceLandmarks.length) return null;
-  const L=res.faceLandmarks[0].map(p=>({x:p.x*W,y:p.y*H}));
-  const bs={}; (res.faceBlendshapes?.[0]?.categories||[]).forEach(c=>bs[c.categoryName]=c.score);
-  const pose = res.facialTransformationMatrixes?.[0] ? eulerFromMatrix(res.facialTransformationMatrixes[0]) : {pitch:null,yaw:null};
-  const irisPx=(d2(L[469],L[471])+d2(L[474],L[476]))/2, ipdPx=d2(L[468],L[473]), u=1/ipdPx;
-  const len=(a,b)=>d2(L[a],L[b])*u;
-  const roll=Math.atan2(L[263].y-L[33].y, L[263].x-L[33].x)*180/Math.PI;
-  const th=-roll*Math.PI/180, cx=L[1].x, cy=L[1].y;
-  const rot=p=>({x:cx+(p.x-cx)*Math.cos(th)-(p.y-cy)*Math.sin(th), y:cy+(p.x-cx)*Math.sin(th)+(p.y-cy)*Math.cos(th)});
-  const oval=FACE_OVAL.map(i=>rot(L[i])), nose=rot(L[1]);
-  const r={
+
+function metricsFrom(P, dist){ // P: landmark array; dist: distance fn (2D or 3D)
+  const ipd=dist(P[468],P[473]), u=1/ipd, len=(a,b)=>dist(P[a],P[b])*u;
+  return {
     jawWidth:len(172,397), faceWidth:len(234,454), cheekWidth:len(132,361),
-    faceArea:polyArea(oval)*u*u, lowerArea:polyArea(clipBelow(oval,nose.y))*u*u,
-    fwhr:d2(L[234],L[454])/d2(L[168],L[0]),
+    fwhr:dist(P[234],P[454])/dist(P[168],P[0]),
     eyeOpen:(len(159,145)+len(386,374))/2,
-    eyeRatio:(d2(L[159],L[145])/d2(L[33],L[133])+d2(L[386],L[374])/d2(L[362],L[263]))/2,
+    eyeRatio:(dist(P[159],P[145])/dist(P[33],P[133])+dist(P[386],P[374])/dist(P[362],P[263]))/2,
     browLid:(len(105,159)+len(334,386))/2,
   };
+}
+function areasFrom(L, ipd, roll){ // 2D areas, roll-corrected, in IPD^2 units
+  const th=-roll*Math.PI/180, cx=L[1].x, cy=L[1].y;
+  const rot=p=>({x:cx+(p.x-cx)*Math.cos(th)-(p.y-cy)*Math.sin(th), y:cy+(p.x-cx)*Math.sin(th)+(p.y-cy)*Math.cos(th)});
+  const oval=FACE_OVAL.map(i=>rot(L[i])), nose=rot(L[1]), u=1/ipd;
+  return { faceArea:polyArea(oval)*u*u, lowerArea:polyArea(clipBelow(oval,nose.y))*u*u };
+}
+function analyzeLandmarks(res, W, H){
+  if(!res.faceLandmarks || !res.faceLandmarks.length) return null;
+  const L=res.faceLandmarks[0].map(p=>({x:p.x*W, y:p.y*H, z:p.z*W}));
+  const bs={}; (res.faceBlendshapes?.[0]?.categories||[]).forEach(c=>bs[c.categoryName]=c.score);
+  const pose = res.facialTransformationMatrixes?.[0] ? eulerFromMatrix(res.facialTransformationMatrixes[0]) : {pitch:0,yaw:0};
+  const roll=Math.atan2(L[263].y-L[33].y, L[263].x-L[33].x)*180/Math.PI;
+  const irisPx=(d2(L[469],L[471])+d2(L[474],L[476]))/2, ipdPx=d2(L[468],L[473]);
+  const ar = areasFrom(L, ipdPx, roll);
+  const r2d = {...metricsFrom(L, d2), ...ar};
+  const r3d = {...metricsFrom(L, d3), ...ar};   // pose-corrected linear metrics (3D distances)
   const fw=d2(L[234],L[454]);
   const q={ roll, yaw:pose.yaw, pitch:pose.pitch,
     blink:Math.max(bs.eyeBlinkLeft||0,bs.eyeBlinkRight||0), smile:Math.max(bs.mouthSmileLeft||0,bs.mouthSmileRight||0),
     jawOpen:bs.jawOpen||0, browUp:bs.browInnerUp||0, irisPx, ipdPx, ipdMmEst:ipdPx*IRIS_MM/irisPx,
     faceFrac:fw/W*100, cxN:(L[234].x+L[454].x)/2/W, cyN:L[1].y/H };
-  return {L, r, q, ovalN: FACE_OVAL.map(i=>[L[i].x/W, L[i].y/H])};
+  return {L, r:r3d, r2d, q};
 }
 
-/* gate: returns per-item deviation and pass flags */
-function evaluate(A, W, H){
-  const q=A.q, g=guide;
-  const tgt = g ? {cx:g.cx, cy:g.cy, size:g.size, pitch:g.pitch} : {cx:0.5, cy:0.48, size:40, pitch:null};
-  const dev = {
-    roll: q.roll,
-    yaw: q.yaw ?? 0,
-    pitch: (tgt.pitch!=null && q.pitch!=null) ? q.pitch - tgt.pitch : 0,
-    dist: (q.faceFrac/tgt.size - 1)*100,
-    pos: Math.hypot((q.cxN - tgt.cx)*W, (q.cyN - tgt.cy)*H) / W * 100,
-  };
-  const ok = {}; for(const k in GATE) ok[k] = Math.abs(dev[k]) <= GATE[k];
-  ok.mouth = q.jawOpen < 0.08; ok.eye = q.blink < 0.35; ok.face = q.smile < 0.25 && q.browUp < 0.35;
-  const all = Object.values(ok).every(Boolean);
-  return {dev, ok, all, tgt};
+/* ---------- personal reference (from saved v4 measurements) ---------- */
+function personalRef(){
+  const b=cur().sort((a,b)=>a.ts-b.ts).slice(0,5);
+  const med=k=>{ const v=b.map(r=>r.q[k]).filter(x=>x!=null&&isFinite(x)); return v.length?median(v):null; };
+  return { pitch:med("pitch"), jawOpen:med("jawOpen") ?? 0.05, smile:med("smile") ?? 0.05, browUp:med("browUp") ?? 0.1 };
 }
-function hintText(ev){
-  const o=ev.ok, d=ev.dev;
-  if(!o.dist) return d.dist<0 ? "폰을 조금 더 가까이" : "폰을 조금 더 멀리";
-  if(!o.pos) return "얼굴을 점선 윤곽 안으로";
-  if(!o.yaw) return "고개를 돌리지 말고 정면으로";
-  if(!o.roll) return "고개 기울기를 바르게";
-  if(!o.pitch) return "턱 높이를 막대 초록색에 맞추세요";
-  if(!o.mouth) return "입을 편하게 다물어 주세요";
-  if(!o.eye) return "노란 점을 보며 눈을 뜨세요";
-  if(!o.face) return "무표정으로 (눈썹·입꼬리 힘 빼기)";
-  return "좋아요, 그대로…";
+let REF = personalRef();
+
+/* frame check: returns {accept, reason, score} */
+function check(A){
+  const q=A.q, pitchDev = REF.pitch!=null ? q.pitch-REF.pitch : 0;
+  const offC = Math.hypot(q.cxN-0.5, q.cyN-0.5)*100;
+  if(q.faceFrac < ACC.sizeMin) return {accept:false, reason:"far"};
+  if(q.faceFrac > ACC.sizeMax) return {accept:false, reason:"near"};
+  if(offC > ACC.center) return {accept:false, reason:"center"};
+  if(Math.abs(q.yaw) > ACC.yaw) return {accept:false, reason:"yaw"};
+  if(Math.abs(pitchDev) > ACC.pitchDev) return {accept:false, reason:"pitch", dir: pitchDev};
+  if(Math.abs(q.roll) > ACC.roll) return {accept:false, reason:"roll"};
+  if(q.blink > 0.45) return {accept:false, reason:"blink"};
+  // expression: compared with this person's usual face; filtered silently unless it persists
+  const jawEx=Math.max(0,q.jawOpen-(REF.jawOpen+0.06)), smEx=Math.max(0,q.smile-(REF.smile+0.2));
+  if(jawEx>0) return {accept:false, reason:"mouth"};
+  if(smEx>0) return {accept:false, reason:"smile"};
+  const score = Math.abs(q.yaw)/4 + Math.abs(pitchDev)/4 + Math.abs(q.roll)/10 + q.jawOpen*5 + q.smile*2 + q.blink;
+  return {accept:true, score};
 }
+const HINTS = { far:"폰을 조금 더 가까이", near:"폰을 조금 더 멀리", center:"얼굴을 원 가운데로", yaw:"고개를 돌리지 말고 정면으로",
+  pitch:"턱 높이를 평소처럼", roll:"고개를 똑바로", blink:"노란 점을 보며 눈을 뜨세요", mouth:"입을 편하게 다물어 주세요", smile:"편안한 표정으로", none:"얼굴이 보이지 않습니다" };
+
+/* ---------- voice ---------- */
+let voiceOn = true, lastSpoken="", lastSpeakT=0;
+function speak(t, force){ if(!voiceOn || !("speechSynthesis" in window)) return; const now=performance.now();
+  if(!force && (t===lastSpoken && now-lastSpeakT<6000 || now-lastSpeakT<2500)) return;
+  try{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(t); u.lang="ko-KR"; u.rate=1.05; speechSynthesis.speak(u); lastSpoken=t; lastSpeakT=now; }catch(e){} }
 
 /* ---------- camera loop ---------- */
-let stream=null, running=false, lastTs=-1, holdStart=0, buffer=[], shots=[], lastFrame=null;
+let stream=null, running=false, lastTs=-1, frames=[], accMs=0, lastFrameT=0, startT=0, badSince=0, lastReason="", stillTaken=false;
+let diagN=0, diagFace=0, diagT0=0;
 const video=$("video"), ov=$("overlay"), work=document.createElement("canvas"), wctx=work.getContext("2d",{willReadFrequently:true});
-function setTrack(id, val, lim){ const el=$(id); const span=lim*3; const pos=Math.max(-1,Math.min(1,val/span));
-  if(!el._init){ el.innerHTML=`<div class="zone" style="left:${50-50/3}%;width:${100/3}%"></div><div class="mark"></div>`; el._init=true; }
-  const m=el.querySelector(".mark"); m.style.left=(50+pos*50)+"%"; m.classList.toggle("bad", Math.abs(val)>lim); }
-function setChip(id, on){ const c=$(id); c.classList.toggle("on",on); c.classList.toggle("off",!on); }
 
 async function startCam(){
-  try{
-    stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:"user", width:{ideal:1280}, height:{ideal:1280}}});
-  }catch(e){ toast("카메라를 열 수 없습니다: "+(e.name||e)); return; }
+  try{ stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:"user", width:{ideal:1280}, height:{ideal:1280}}}); }
+  catch(e){ toast("카메라를 열 수 없습니다: "+(e.name||e)); return; }
   video.srcObject=stream; try{ await video.play(); }catch(e){}
   $("home").classList.add("hidden"); $("cam").classList.remove("hidden");
-  shots=[]; buffer=[]; holdStart=0; running=true; $("c_shot").textContent=`촬영 0/${SHOTS}`;
+  REF=personalRef(); frames=[]; accMs=0; lastFrameT=0; startT=performance.now(); badSince=0; stillTaken=false; running=true;
+  $("prog").style.width="0%"; $("phase").textContent="얼굴을 원 안에 두고 노란 점을 바라보세요";
+  speak("노란 점을 편하게 바라보세요", true);
   requestAnimationFrame(loop);
 }
-function stopCam(){ running=false; if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } $("cam").classList.add("hidden"); $("home").classList.remove("hidden"); }
+function stopCam(){ running=false; if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } try{speechSynthesis.cancel();}catch(e){} $("cam").classList.add("hidden"); $("home").classList.remove("hidden"); }
 
-function drawOverlay(A, ev, W, H, progress){
+function drawOverlay(A, accepted, W, H, progress){
   const sw=ov.clientWidth, sh=ov.clientHeight, dpr=window.devicePixelRatio||1;
-  if(ov.width!==sw*dpr || ov.height!==sh*dpr){ ov.width=sw*dpr; ov.height=sh*dpr; }
-  const g=ov.getContext("2d"); g.setTransform(1,0,0,1,0,0); g.clearRect(0,0,ov.width,ov.height);
-  // map video coords -> canvas (object-fit: cover)
+  if(ov.width!==Math.round(sw*dpr) || ov.height!==Math.round(sh*dpr)){ ov.width=Math.round(sw*dpr); ov.height=Math.round(sh*dpr); }
+  const g=ov.getContext("2d"); g.clearRect(0,0,ov.width,ov.height);
   const s=Math.max(ov.width/W, ov.height/H), ox=(ov.width-W*s)/2, oy=(ov.height-H*s)/2;
-  const P=(x,y)=>[ox+x*s, oy+y*s];
-  g.lineWidth=3*dpr;
-  // guide
-  g.setLineDash([10*dpr,8*dpr]); g.strokeStyle= ev&&ev.all ? "rgba(124,196,138,.95)" : "rgba(255,255,255,.85)";
-  g.beginPath();
-  if(guide){ guide.oval.forEach(([x,y],i)=>{ const [a,b]=P(x*W,y*H); i?g.lineTo(a,b):g.moveTo(a,b); }); g.closePath(); }
-  else { const rw=W*0.40/2*1.0, rh=rw*1.32; const [a,b]=P(W*0.5,H*0.48-rh*0.08); g.ellipse(a,b,rw*s,rh*s,0,0,Math.PI*2); }
-  g.stroke(); g.setLineDash([]);
-  // live face outline
-  if(A){ g.strokeStyle="rgba(255,209,102,.9)"; g.lineWidth=2*dpr; g.beginPath();
-    FACE_OVAL.forEach((i,k)=>{ const [a,b]=P(A.L[i].x,A.L[i].y); k?g.lineTo(a,b):g.moveTo(a,b); }); g.closePath(); g.stroke(); }
-  // progress ring
-  if(progress>0){ const a=ov.width/2, b=ov.height-40*dpr; g.strokeStyle="rgba(124,196,138,.95)"; g.lineWidth=6*dpr; g.beginPath(); g.arc(a,b,22*dpr,-Math.PI/2,-Math.PI/2+progress*2*Math.PI); g.stroke(); }
+  const cx=ox+W*0.5*s, cy=oy+H*0.5*s, rx=W*0.30*s, ry=rx*1.35;
+  // big soft guide ellipse
+  g.lineWidth=4*dpr; g.strokeStyle = accepted ? "rgba(124,196,138,.95)" : "rgba(255,255,255,.75)";
+  g.setLineDash(accepted?[]:[12*dpr,10*dpr]); g.beginPath(); g.ellipse(cx,cy,rx,ry,0,0,Math.PI*2); g.stroke(); g.setLineDash([]);
+  // progress arc on the ellipse
+  if(progress>0){ g.lineWidth=8*dpr; g.strokeStyle="rgba(124,196,138,1)"; g.beginPath(); g.ellipse(cx,cy,rx+10*dpr,ry+10*dpr,0,-Math.PI/2,-Math.PI/2+progress*2*Math.PI); g.stroke(); }
+  if(A){ g.strokeStyle="rgba(255,209,102,.8)"; g.lineWidth=2*dpr; g.beginPath();
+    FACE_OVAL.forEach((i,k)=>{ const x=ox+A.L[i].x*s, y=oy+A.L[i].y*s; k?g.lineTo(x,y):g.moveTo(x,y); }); g.closePath(); g.stroke(); }
 }
 
 function loop(){
   if(!running) return;
-  const VW=video.videoWidth, VH=video.videoHeight;
+  const VW=video.videoWidth, VH=video.videoHeight, now=performance.now();
   if(VW && VH && video.readyState>=2 && video.currentTime!==lastTs){
     lastTs=video.currentTime;
     const sc=Math.min(1, 960/Math.max(VW,VH)), W=Math.round(VW*sc), H=Math.round(VH*sc);
     if(work.width!==W||work.height!==H){ work.width=W; work.height=H; }
     wctx.drawImage(video,0,0,W,H);
-    let A=null, ev=null;
-    try{ A=analyzeLandmarks(lm.detectForVideo(work, performance.now()), W, H); lastErr=""; }catch(e){ lastErr=String(e&&e.message||e).slice(0,80); console.error(e); }
-    frameCount++; if(A) faceCount++;
-    let progress=0;
-    if(A){
-      ev=evaluate(A,W,H);
-      setTrack("t_roll",ev.dev.roll,GATE.roll); setTrack("t_yaw",ev.dev.yaw,GATE.yaw); setTrack("t_pitch",ev.dev.pitch,GATE.pitch);
-      setTrack("t_dist",ev.dev.dist,GATE.dist); setTrack("t_pos",ev.dev.pos,GATE.pos);
-      setChip("c_mouth",ev.ok.mouth); setChip("c_eye",ev.ok.eye); setChip("c_face",ev.ok.face);
-      $("hint").textContent=hintText(ev);
-      const now=performance.now();
-      if(ev.all){ if(!holdStart){ holdStart=now; buffer=[]; } buffer.push(A); progress=Math.min(1,(now-holdStart)/HOLD_MS);
-        if(now-holdStart>=HOLD_MS && buffer.length>=5){ captureShot(buffer, W, H); holdStart=0; buffer=[]; }
-      } else { holdStart=0; buffer=[]; }
-    } else { $("hint").textContent= lastErr ? "분석 오류: "+lastErr : "얼굴이 보이지 않습니다"; holdStart=0; buffer=[]; }
-    const now2=performance.now(); if(!fpsT0) fpsT0=now2;
-    if(now2-fpsT0>1000){ $("diagLine").textContent=`${delegateName} · 카메라 ${VW}×${VH} · 분석 ${W}×${H} · ${Math.round(frameCount*1000/(now2-fpsT0))}fps · 얼굴 ${faceCount}/${frameCount}`; frameCount=0; faceCount=0; fpsT0=now2; }
-    drawOverlay(A, ev, W, H, progress);
+    let A=null; try{ A=analyzeLandmarks(detect(work), W, H); lastErr=""; }catch(e){ lastErr=String(e&&e.message||e).slice(0,80); }
+    diagN++; if(A) diagFace++;
+    const c = A ? check(A) : {accept:false, reason:"none"};
+    const dt = lastFrameT ? Math.min(200, now-lastFrameT) : 0; lastFrameT=now;
+    if(c.accept){
+      accMs += dt; A.t=accMs; A.score=c.score; frames.push({r:A.r, r2d:A.r2d, q:A.q, t:accMs, score:c.score}); badSince=0;
+      $("hint").textContent="좋아요, 그대로 노란 점을 보세요";
+      if(!stillTaken && accMs>WINDOW_MS*0.4){ const p=$("preview"); p.width=W; p.height=H; p.getContext("2d").drawImage(work,0,0,W,H); lastStill={L:A.L}; stillTaken=true; }
+    } else {
+      if(!badSince) badSince=now;
+      if(now-badSince>700){ const t=lastErr?("분석 오류: "+lastErr):HINTS[c.reason]; $("hint").textContent=t; if(now-badSince>1200) speak(t); }
+    }
+    const progress=Math.min(1, accMs/WINDOW_MS);
+    $("prog").style.width=(progress*100).toFixed(0)+"%";
+    drawOverlay(A, c.accept, W, H, progress);
+    if(!diagT0) diagT0=now;
+    if(now-diagT0>1000){ $("diagLine").textContent=`${delegateName} · 카메라 ${VW}×${VH} · ${Math.round(diagN*1000/(now-diagT0))}fps · 얼굴 ${diagFace}/${diagN} · 사용 프레임 ${frames.length}`; diagN=0; diagFace=0; diagT0=now; }
+    if(accMs>=WINDOW_MS && frames.length>=15){ finish(); return; }
+    if(now-startT>MAX_MS){ if(frames.length>=15){ finish(); return; } stopCam(); toast("측정 시간이 지났습니다. 밝은 곳에서 다시 해 보세요."); return; }
   }
   requestAnimationFrame(loop);
 }
 
-function aggregate(list){ // median per field
-  const r={}, q={}; METRICS.forEach(({key})=>r[key]=median(list.map(a=>a.r[key])));
-  Object.keys(list[0].q).forEach(k=>{ const v=list.map(a=>a.q[k]).filter(x=>x!=null&&isFinite(x)); q[k]=v.length?median(v):null; });
-  return {r,q};
-}
-function captureShot(buf, W, H){
-  const agg=aggregate(buf); agg.frames=buf.length; agg.ovalN=buf[Math.floor(buf.length/2)].ovalN; agg.L=buf[Math.floor(buf.length/2)].L;
-  shots.push(agg);
-  if(navigator.vibrate) try{ navigator.vibrate(60); }catch(e){}
-  $("c_shot").textContent=`촬영 ${shots.length}/${SHOTS}`;
-  if(shots.length===1){ // keep a still for the result view (not stored)
-    const c=$("preview"); c.width=W; c.height=H; c.getContext("2d").drawImage(work,0,0,W,H); lastFrame={L:agg.L};
+/* ---------- aggregate: 3 segments, best half of frames in each ---------- */
+let lastStill=null, pending=null;
+function segmentShots(fr){
+  const shots=[];
+  for(let k=0;k<SEGMENTS;k++){
+    const lo=WINDOW_MS*k/SEGMENTS, hi=WINDOW_MS*(k+1)/SEGMENTS;
+    let seg=fr.filter(f=>f.t>lo && f.t<=hi+1e-6); if(seg.length<3) seg=fr.slice(Math.floor(fr.length*k/SEGMENTS), Math.floor(fr.length*(k+1)/SEGMENTS));
+    seg=[...seg].sort((a,b)=>a.score-b.score).slice(0, Math.max(3, Math.ceil(seg.length/2)));
+    const r={}, r2d={}; METRICS.forEach(({key})=>{ r[key]=median(seg.map(f=>f.r[key])); r2d[key]=median(seg.map(f=>f.r2d[key])); });
+    const q={}; Object.keys(seg[0].q).forEach(k2=>{ const v=seg.map(f=>f.q[k2]).filter(x=>x!=null&&isFinite(x)); q[k2]=v.length?median(v):null; });
+    shots.push({r,r2d,q,n:seg.length});
   }
-  if(shots.length>=SHOTS){ stopCam(); showResult(); }
-  else toast(`${shots.length}회 촬영됨 — 그대로 유지하세요`);
+  return shots;
+}
+function finish(){
+  running=false; const fr=frames.slice(); stopCam();
+  const shots=segmentShots(fr);
+  const r={}, r2d={}, cv={}, cv2d={};
+  METRICS.forEach(({key})=>{ const v=shots.map(s=>s.r[key]), v2=shots.map(s=>s.r2d[key]);
+    r[key]=median(v); r2d[key]=median(v2); cv[key]=sd(v)/mean(v)*100; cv2d[key]=sd(v2)/mean(v2)*100; });
+  const q={}; Object.keys(shots[0].q).forEach(k=>{ const v=shots.map(s=>s.q[k]).filter(x=>x!=null&&isFinite(x)); q[k]=v.length?median(v):null; });
+  pending={r, r2d, q, cv, cv2d, frames:fr.length};
+  speak("측정이 끝났습니다", true);
+  showResult();
 }
 
-/* ---------- result ---------- */
-let pending=null;
-function sorted(){ return [...records].sort((a,b)=>a.ts-b.ts); }
+/* ---------- baseline & helpers ---------- */
+function sorted(){ return cur().sort((a,b)=>a.ts-b.ts); }
 function baselineSet(){ return sorted().slice(0,5); }
-function baselineVals(){ const b=baselineSet(); if(!b.length) return null; const o={}; METRICS.forEach(({key})=>o[key]=median(b.map(r=>r.r[key]))); return o; }
+function baselineVals(field="r"){ const b=baselineSet(); if(!b.length) return null; const o={}; METRICS.forEach(({key})=>o[key]=median(b.map(r=>r[field][key]))); return o; }
 function pct(v,key,base){ if(!base||!base[key]) return null; return (v/base[key]-1)*100; }
 function personalIPD(extra){ const v=sorted().slice(0,10).map(r=>r.q.ipdMmEst).filter(x=>isFinite(x)); if(extra) v.push(extra); return v.length?median(v):63; }
 function toMM(r,ipd){ const o={}; METRICS.forEach(({key})=>{ const v=r[key]; o[key]=UNITLESS.has(key)?v:AREA_KEYS.has(key)?v*ipd*ipd/100:v*ipd; }); return o; }
 
 function showResult(){
-  const r={}, cv={}; METRICS.forEach(({key})=>{ const v=shots.map(s=>s.r[key]); r[key]=median(v); cv[key]=v.length>1? sd(v)/mean(v)*100 : null; });
-  const qAll=aggregate(shots.map(s=>({r:s.r,q:s.q}))).q;
-  pending={r, q:qAll, cv, ovalN:shots[0].ovalN, frames:shots.reduce((s,x)=>s+x.frames,0)};
-  // draw landmarks on still
-  const c=$("preview"), g=c.getContext("2d"), L=lastFrame.L; g.lineWidth=Math.max(2,c.width/400);
-  g.strokeStyle="rgba(95,184,177,.9)"; g.beginPath(); FACE_OVAL.forEach((i,k)=>{const p=L[i]; k?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y);}); g.closePath(); g.stroke();
-  const line=(a,b,col)=>{ g.strokeStyle=col; g.beginPath(); g.moveTo(L[a].x,L[a].y); g.lineTo(L[b].x,L[b].y); g.stroke(); };
-  line(172,397,"#e39a63"); line(234,454,"#e39a63"); line(132,361,"#e39a63");
-  const base=baselineVals(), mm=toMM(r, personalIPD(qAll.ipdMmEst));
-  $("resTable").innerHTML=`<tr><th>지표</th><th>값</th><th>3회 CV</th><th>기준 대비</th></tr>`+METRICS.map(({key,label,unit})=>{
-    const p=pct(r[key],key,base), c=cv[key], cls=c==null?"":c<1?"ok":c<2?"wn":"ng";
-    return `<tr><td>${label}</td><td>${fmt(mm[key],dpFor(key))} ${unit}</td><td><span class="${cls}" style="padding:1px 6px;border-radius:6px">${fmt(c,2)}%</span></td><td class="${p>0?"pos":"neg"}">${p==null?"–":(p>0?"+":"")+fmt(p)+"%"}</td></tr>`; }).join("");
-  $("resNote").textContent = guide ? "값은 3회 촬영의 중앙값입니다." : "값은 3회 촬영의 중앙값입니다. 저장하면 이번 얼굴 윤곽이 다음부터 가이드 선이 됩니다.";
+  const P=pending;
+  if(lastStill){ const c=$("preview"), g=c.getContext("2d"), L=lastStill.L; g.lineWidth=Math.max(2,c.width/400);
+    g.strokeStyle="rgba(95,184,177,.9)"; g.beginPath(); FACE_OVAL.forEach((i,k)=>{const p=L[i]; k?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y);}); g.closePath(); g.stroke();
+    const line=(a,b,col)=>{ g.strokeStyle=col; g.beginPath(); g.moveTo(L[a].x,L[a].y); g.lineTo(L[b].x,L[b].y); g.stroke(); };
+    line(172,397,"#e39a63"); line(234,454,"#e39a63"); line(132,361,"#e39a63"); }
+  const base=baselineVals(), mm=toMM(P.r, personalIPD(P.q.ipdMmEst));
+  const cls=c=>c==null?"":c<1?"ok":c<2?"wn":"ng";
+  $("resTable").innerHTML=`<tr><th>지표</th><th>값</th><th>CV 보정후</th><th>CV 보정전</th><th>기준 대비</th></tr>`+METRICS.map(({key,label,unit})=>{
+    const p=pct(P.r[key],key,base);
+    return `<tr><td>${label}</td><td>${fmt(mm[key],dpFor(key))} ${unit}</td><td><span class="${cls(P.cv[key])}" style="padding:1px 6px;border-radius:6px">${fmt(P.cv[key],2)}%</span></td><td>${fmt(P.cv2d[key],2)}%</td><td class="${p>0?"pos":"neg"}">${p==null?"–":(p>0?"+":"")+fmt(p)+"%"}</td></tr>`; }).join("");
+  $("resNote").textContent=`약 6초 동안 ${P.frames}프레임을 분석해 3구간으로 나누고, 각 구간에서 자세가 가장 바른 프레임들의 중앙값을 냈습니다. "보정후"는 고개 각도를 3D로 보정한 값입니다(면적 지표는 보정 없음).`;
   $("resultCard").classList.remove("hidden"); $("resultCard").scrollIntoView({behavior:"smooth"});
 }
 $("saveBtn").addEventListener("click", ()=>{
   if(!pending) return;
   const w=parseFloat($("weight").value);
-  const rec={ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", weight:isFinite(w)?w:null, note:$("note").value.trim(), r:pending.r, q:pending.q, cv:pending.cv, frames:pending.frames, v:3 };
-  records.push(rec);
-  if(!guide){ guide={ oval:pending.ovalN, cx:pending.q.cxN, cy:pending.q.cyN, size:pending.q.faceFrac, pitch:pending.q.pitch }; saveGuide(guide); }
+  records.push({ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", weight:isFinite(w)?w:null, note:$("note").value.trim(), ...pending, v:VERSION });
   persist(); pending=null; $("resultCard").classList.add("hidden"); $("note").value=""; toast("저장했습니다"); renderAll();
 });
 $("discardBtn").addEventListener("click", ()=>{ pending=null; $("resultCard").classList.add("hidden"); });
@@ -428,13 +433,15 @@ function drawChart(){
   g.strokeStyle=c1; g.fillStyle=c1; g.lineWidth=2; g.beginPath(); rs.forEach((r,i)=>{ const y=Y(ys[i]); i?g.lineTo(X(r.ts),y):g.moveTo(X(r.ts),y); }); g.stroke();
   rs.forEach((r,i)=>{ g.beginPath(); g.arc(X(r.ts),Y(ys[i]),3.5,0,7); g.fill(); });
   g.fillStyle=cm; g.fillText(fmtDate(t0),pad.l,H-6); const e=fmtDate(t1); g.fillText(e,W-pad.r-g.measureText(e).width,H-6);
-  $("baselineNote").textContent=`기준값 = 처음 ${baselineSet().length}회 측정의 중앙값. 0% 위는 기준보다 큼(부음 쪽), 아래는 작음.`;
+  $("baselineNote").textContent=`기준값 = 새 방식 처음 ${baselineSet().length}회 측정의 중앙값. 0% 위는 기준보다 큼(부음 쪽), 아래는 작음.`;
 }
 function renderHistory(){
-  const rs=sorted().reverse(), base=baselineVals(), ipd=personalIPD(), d=v=>v==null?"–":(v>0?"+":"")+fmt(v)+"%";
-  if(!rs.length){ $("histTable").innerHTML=`<tr><td class="status">아직 기록이 없습니다.</td></tr>`; return; }
+  const all=[...records].sort((a,b)=>b.ts-a.ts), base=baselineVals(), ipd=personalIPD(), d=v=>v==null?"–":(v>0?"+":"")+fmt(v)+"%";
+  if(!all.length){ $("histTable").innerHTML=`<tr><td class="status">아직 기록이 없습니다.</td></tr>`; return; }
   $("histTable").innerHTML=`<tr><th>시각</th><th>시점</th><th>체중</th><th>턱 폭</th><th>Δ</th><th>광대 폭</th><th>Δ</th><th>턱 CV</th><th></th></tr>`+
-    rs.map(r=>{ const m=toMM(r.r,ipd), pj=pct(r.r.jawWidth,"jawWidth",base), pf=pct(r.r.faceWidth,"faceWidth",base);
+    all.map(r=>{ const old=(r.v||0)<VERSION;
+      if(old) return `<tr style="opacity:.5"><td>${fmtDate(r.ts)}</td><td colspan="7" style="text-align:left">이전 방식 기록 (분석에서 제외)</td><td><button class="small danger" data-del="${r.id}">삭제</button></td></tr>`;
+      const m=toMM(r.r,ipd), pj=pct(r.r.jawWidth,"jawWidth",base), pf=pct(r.r.faceWidth,"faceWidth",base);
       return `<tr><td>${fmtDate(r.ts)}</td><td>${r.session}</td><td>${r.weight!=null?fmt(r.weight):"–"}</td><td>${fmt(m.jawWidth)}</td><td class="${pj>0?"pos":"neg"}">${d(pj)}</td><td>${fmt(m.faceWidth)}</td><td class="${pf>0?"pos":"neg"}">${d(pf)}</td><td>${fmt(r.cv?.jawWidth,2)}%</td><td><button class="small danger" data-del="${r.id}">삭제</button></td></tr>`; }).join("");
 }
 function renderAll(){ renderHistory(); drawChart(); }
@@ -445,9 +452,10 @@ $("histTable").addEventListener("click", e=>{ const id=e.target?.dataset?.del; i
 /* ---------- CSV ---------- */
 function toCSV(){
   const ipd=personalIPD(), f=(v,d)=>(v==null||!isFinite(v))?"":v.toFixed(d), esc=s=>`"${String(s??"").replace(/"/g,'""')}"`;
-  const head=["timestamp","session","camera","weight_kg","note",...METRICS.map(m=>m.key+"_mm"),...METRICS.map(m=>m.key+"_ipdratio"),...METRICS.map(m=>m.key+"_cv3"),"roll_deg","yaw_deg","pitch_deg","blink","smile","jawOpen","browUp","iris_px","ipd_px","ipd_mm_est","face_frac_pct","frames"];
-  const lines=sorted().map(r=>{ const mm=toMM(r.r,ipd); return [new Date(r.ts).toISOString(),r.session,r.camera,r.weight??"",esc(r.note),
-    ...METRICS.map(m=>f(mm[m.key],3)),...METRICS.map(m=>f(r.r[m.key],5)),...METRICS.map(m=>f(r.cv?.[m.key],3)),
+  const K=METRICS.map(m=>m.key);
+  const head=["timestamp","session","weight_kg","note",...K.map(k=>k+"_mm"),...K.map(k=>k+"_ipdratio"),...K.map(k=>k+"_2d_ipdratio"),...K.map(k=>k+"_cv3"),...K.map(k=>k+"_2d_cv3"),"roll_deg","yaw_deg","pitch_deg","blink","smile","jawOpen","browUp","iris_px","ipd_px","ipd_mm_est","face_frac_pct","frames"];
+  const lines=sorted().map(r=>{ const mm=toMM(r.r,ipd); return [new Date(r.ts).toISOString(),r.session,r.weight??"",esc(r.note),
+    ...K.map(k=>f(mm[k],3)),...K.map(k=>f(r.r[k],5)),...K.map(k=>f(r.r2d?.[k],5)),...K.map(k=>f(r.cv?.[k],3)),...K.map(k=>f(r.cv2d?.[k],3)),
     f(r.q.roll,2),f(r.q.yaw,2),f(r.q.pitch,2),f(r.q.blink,3),f(r.q.smile,3),f(r.q.jawOpen,3),f(r.q.browUp,3),f(r.q.irisPx,1),f(r.q.ipdPx,1),f(r.q.ipdMmEst,2),f(r.q.faceFrac,1),r.frames??""].join(","); });
   return "﻿"+[head.join(","),...lines].join("\n");
 }
@@ -457,15 +465,23 @@ $("shareBtn").addEventListener("click", async ()=>{
   const file=new File([toCSV()], csvName(), {type:"text/csv"});
   try{ if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:"얼굴 붓기 기록"}); } else { await navigator.clipboard.writeText(toCSV()); toast("CSV를 복사했습니다"); } }
   catch(e){ if(e.name!=="AbortError") toast("보내기를 할 수 없습니다"); } });
-$("resetGuide").addEventListener("click", e=>{ if(e.target.dataset.armed){ guide=null; try{localStorage.removeItem(LS_GUIDE);}catch(_){} toast("다음 측정의 윤곽이 새 가이드가 됩니다"); e.target.textContent="가이드 윤곽 다시 정하기"; delete e.target.dataset.armed; }
-  else { e.target.dataset.armed="1"; e.target.textContent="한 번 더 누르면 초기화"; setTimeout(()=>{ delete e.target.dataset.armed; e.target.textContent="가이드 윤곽 다시 정하기"; },2500); } });
 
 /* ---------- wiring ---------- */
 $("chartMetric").innerHTML=METRICS.map(m=>`<option value="${m.key}"${m.key==="jawWidth"?" selected":""}>${m.label}</option>`).join("");
 $("chartMetric").addEventListener("change", drawChart);
 $("startBtn").addEventListener("click", startCam);
 $("cancelCam").addEventListener("click", stopCam);
+try{ voiceOn = localStorage.getItem("face-fluid-voice")!=="0"; }catch(e){}
+const setVoiceBtn=()=>$("voiceBtn").textContent = voiceOn ? "음성 안내 끄기" : "음성 안내 켜기";
+setVoiceBtn();
+$("voiceBtn").addEventListener("click", ()=>{ voiceOn=!voiceOn; try{localStorage.setItem("face-fluid-voice", voiceOn?"1":"0");}catch(e){} if(!voiceOn) try{speechSynthesis.cancel();}catch(e){} setVoiceBtn(); });
 window.addEventListener("resize", ()=>{ clearTimeout(window._rz); window._rz=setTimeout(drawChart,150); });
+
+/* test hook: analyze a still image (local testing only) */
+window.__analyzeURL = async (url)=>{ const im=new Image(); im.src=url; await im.decode(); const c=document.createElement("canvas"); c.width=im.naturalWidth; c.height=im.naturalHeight; c.getContext("2d").drawImage(im,0,0);
+  const A=analyzeLandmarks(detect(c), c.width, c.height); return A?{r:A.r, r2d:A.r2d, q:A.q}:null; };
+window.__ready=()=>!!lm;
+
 renderAll();
 initEngine();
 </script>
