@@ -161,6 +161,7 @@
     <div class="g"><span>위치</span><div class="track" id="t_pos"></div></div>
     <div class="chips"><span class="chip" id="c_mouth">입 다물기</span><span class="chip" id="c_eye">눈 뜨기</span><span class="chip" id="c_face">무표정</span><span class="chip" id="c_shot">촬영 0/3</span></div>
     <div id="camBtns"><button class="ghost" id="cancelCam">취소</button></div>
+    <div id="diagLine" style="font-size:11px;opacity:.6"></div>
   </div>
 </section>
 <div class="toast" id="toast"></div>
@@ -213,13 +214,14 @@ function saveGuide(g){ try{ localStorage.setItem(LS_GUIDE, JSON.stringify(g)); }
 let guide = loadGuide();   // {oval:[[x,y]...] normalized, cx,cy,size, pitch, aspect}
 
 /* ---------- engine ---------- */
-let lm=null;
+let lm=null, delegateName="", lastErr="", frameCount=0, faceCount=0, fpsT0=0;
 async function initEngine(){
   try{
     const fs = await FilesetResolver.forVisionTasks(LOCAL ? new URL("./wasm", location.href).href : CDN + "/wasm");
     const opts = d => ({ baseOptions:{ modelAssetPath: MODEL_URL, delegate:d }, runningMode:"VIDEO", numFaces:1, outputFaceBlendshapes:true, outputFacialTransformationMatrixes:true });
-    try{ lm = await FaceLandmarker.createFromOptions(fs, opts("GPU")); }
-    catch(e){ lm = await FaceLandmarker.createFromOptions(fs, opts("CPU")); }
+    const wantGPU = new URLSearchParams(location.search).has("gpu");
+    if(wantGPU){ try{ lm = await FaceLandmarker.createFromOptions(fs, opts("GPU")); delegateName="GPU"; }catch(e){ lm=null; } }
+    if(!lm){ lm = await FaceLandmarker.createFromOptions(fs, opts("CPU")); delegateName="CPU"; }
     $("status").innerHTML = "<b>준비 완료.</b> " + (guide ? "저장된 얼굴 윤곽을 가이드로 씁니다." : "첫 측정의 얼굴 윤곽이 다음부터 가이드가 됩니다.");
     $("startBtn").disabled=false;
   }catch(e){ console.error(e); $("status").innerHTML="<b>분석 엔진을 불러오지 못했습니다.</b> 인터넷 연결을 확인하고 새로고침하세요. ("+(e&&e.message||e)+")"; }
@@ -286,7 +288,7 @@ function hintText(ev){
 
 /* ---------- camera loop ---------- */
 let stream=null, running=false, lastTs=-1, holdStart=0, buffer=[], shots=[], lastFrame=null;
-const video=$("video"), ov=$("overlay");
+const video=$("video"), ov=$("overlay"), work=document.createElement("canvas"), wctx=work.getContext("2d",{willReadFrequently:true});
 function setTrack(id, val, lim){ const el=$(id); const span=lim*3; const pos=Math.max(-1,Math.min(1,val/span));
   if(!el._init){ el.innerHTML=`<div class="zone" style="left:${50-50/3}%;width:${100/3}%"></div><div class="mark"></div>`; el._init=true; }
   const m=el.querySelector(".mark"); m.style.left=(50+pos*50)+"%"; m.classList.toggle("bad", Math.abs(val)>lim); }
@@ -294,9 +296,9 @@ function setChip(id, on){ const c=$(id); c.classList.toggle("on",on); c.classLis
 
 async function startCam(){
   try{
-    stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:"user", width:{ideal:1920}, height:{ideal:1920}}});
+    stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:"user", width:{ideal:1280}, height:{ideal:1280}}});
   }catch(e){ toast("카메라를 열 수 없습니다: "+(e.name||e)); return; }
-  video.srcObject=stream; await video.play();
+  video.srcObject=stream; try{ await video.play(); }catch(e){}
   $("home").classList.add("hidden"); $("cam").classList.remove("hidden");
   shots=[]; buffer=[]; holdStart=0; running=true; $("c_shot").textContent=`촬영 0/${SHOTS}`;
   requestAnimationFrame(loop);
@@ -326,11 +328,15 @@ function drawOverlay(A, ev, W, H, progress){
 
 function loop(){
   if(!running) return;
-  const W=video.videoWidth, H=video.videoHeight;
-  if(W && H && video.currentTime!==lastTs){
+  const VW=video.videoWidth, VH=video.videoHeight;
+  if(VW && VH && video.readyState>=2 && video.currentTime!==lastTs){
     lastTs=video.currentTime;
+    const sc=Math.min(1, 960/Math.max(VW,VH)), W=Math.round(VW*sc), H=Math.round(VH*sc);
+    if(work.width!==W||work.height!==H){ work.width=W; work.height=H; }
+    wctx.drawImage(video,0,0,W,H);
     let A=null, ev=null;
-    try{ A=analyzeLandmarks(lm.detectForVideo(video, performance.now()), W, H); }catch(e){ console.error(e); }
+    try{ A=analyzeLandmarks(lm.detectForVideo(work, performance.now()), W, H); lastErr=""; }catch(e){ lastErr=String(e&&e.message||e).slice(0,80); console.error(e); }
+    frameCount++; if(A) faceCount++;
     let progress=0;
     if(A){
       ev=evaluate(A,W,H);
@@ -342,7 +348,9 @@ function loop(){
       if(ev.all){ if(!holdStart){ holdStart=now; buffer=[]; } buffer.push(A); progress=Math.min(1,(now-holdStart)/HOLD_MS);
         if(now-holdStart>=HOLD_MS && buffer.length>=5){ captureShot(buffer, W, H); holdStart=0; buffer=[]; }
       } else { holdStart=0; buffer=[]; }
-    } else { $("hint").textContent="얼굴이 보이지 않습니다"; holdStart=0; buffer=[]; }
+    } else { $("hint").textContent= lastErr ? "분석 오류: "+lastErr : "얼굴이 보이지 않습니다"; holdStart=0; buffer=[]; }
+    const now2=performance.now(); if(!fpsT0) fpsT0=now2;
+    if(now2-fpsT0>1000){ $("diagLine").textContent=`${delegateName} · 카메라 ${VW}×${VH} · 분석 ${W}×${H} · ${Math.round(frameCount*1000/(now2-fpsT0))}fps · 얼굴 ${faceCount}/${frameCount}`; frameCount=0; faceCount=0; fpsT0=now2; }
     drawOverlay(A, ev, W, H, progress);
   }
   requestAnimationFrame(loop);
@@ -359,7 +367,7 @@ function captureShot(buf, W, H){
   if(navigator.vibrate) try{ navigator.vibrate(60); }catch(e){}
   $("c_shot").textContent=`촬영 ${shots.length}/${SHOTS}`;
   if(shots.length===1){ // keep a still for the result view (not stored)
-    const c=$("preview"); c.width=W; c.height=H; c.getContext("2d").drawImage(video,0,0,W,H); lastFrame={L:agg.L};
+    const c=$("preview"); c.width=W; c.height=H; c.getContext("2d").drawImage(work,0,0,W,H); lastFrame={L:agg.L};
   }
   if(shots.length>=SHOTS){ stopCam(); showResult(); }
   else toast(`${shots.length}회 촬영됨 — 그대로 유지하세요`);
