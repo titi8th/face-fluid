@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f6f6b">
+<title>얼굴 붓기 지표 (실시간 가이드)</title>
+<style>
+  :root{
+    --bg:#f6f5f2; --card:#ffffff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e3e1dc;
+    --accent:#1f6f6b; --accent-soft:#e3f0ef; --warn:#a15c00; --warn-soft:#fbf0de;
+    --bad:#a8322d; --bad-soft:#f8e3e1; --good:#2f7a3d; --good-soft:#e4f2e6; --w1:#1f6f6b; --w2:#c0662b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141416; --card:#1e1e21; --ink:#ececee; --muted:#9a9aa1; --line:#2e2e33;
+      --accent:#5fb8b1; --accent-soft:#1d3433; --warn:#e3a54f; --warn-soft:#3a2d18;
+      --bad:#e7807a; --bad-soft:#3b1f1d; --good:#7cc48a; --good-soft:#1d3322; --w1:#5fb8b1; --w2:#e39a63;}
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+  main{max-width:760px;margin:0 auto;padding:16px 14px calc(60px + env(safe-area-inset-bottom))}
+  h1{font-size:20px;margin:6px 0 2px;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0}
+  .card h2{font-size:16px;margin:0 0 10px}
+  .status{font-size:13px;color:var(--muted)} .status b{color:var(--ink)}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row > label{flex:1 1 140px;font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+  select,input[type=number],input[type=text]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 10px;width:100%}
+  .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  button{font:inherit;font-weight:600;border:0;border-radius:12px;padding:12px 16px;cursor:pointer;background:var(--accent);color:#fff;flex:1 1 150px}
+  button.ghost{background:var(--accent-soft);color:var(--accent)}
+  button.small{flex:0 0 auto;padding:6px 10px;font-size:13px;border-radius:9px}
+  button.danger{background:var(--bad-soft);color:var(--bad)}
+  button:disabled{opacity:.45}
+  details summary{cursor:pointer;font-weight:600}
+  details ul{margin:8px 0 0;padding-left:20px;color:var(--muted);font-size:14px}
+  table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+  th,td{text-align:right;padding:6px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left} th{color:var(--muted);font-weight:600}
+  .scroll{overflow-x:auto}
+  .pos{color:var(--warn)} .neg{color:var(--accent)}
+  .note{font-size:12.5px;color:var(--muted);margin-top:8px}
+  canvas.chart{width:100%;height:220px;display:block}
+  canvas.preview{width:100%;height:auto;border-radius:10px;background:#000;display:block;transform:scaleX(-1)}
+  .legend{display:flex;gap:14px;font-size:12.5px;color:var(--muted);margin-top:6px}
+  .sw{display:inline-block;width:12px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+  .hidden{display:none !important}
+  .pill{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+  .ok{background:var(--good-soft);color:var(--good)} .wn{background:var(--warn-soft);color:var(--warn)} .ng{background:var(--bad-soft);color:var(--bad)}
+  .toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+  .toast.show{opacity:.95}
+
+  /* ---- camera screen ---- */
+  #cam{position:fixed;inset:0;background:#000;z-index:20;display:flex;flex-direction:column}
+  #stage{position:relative;flex:1;overflow:hidden}
+  #video,#overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  #hint{position:absolute;left:0;right:0;top:calc(10px + env(safe-area-inset-top));text-align:center;color:#fff;font-weight:700;font-size:18px;text-shadow:0 1px 4px rgba(0,0,0,.8);padding:0 16px}
+  #fix{position:absolute;left:50%;top:calc(4px + env(safe-area-inset-top));width:10px;height:10px;margin-left:-5px;border-radius:50%;background:#ffd166;box-shadow:0 0 0 3px rgba(0,0,0,.35)}
+  #panel{background:rgba(0,0,0,.82);color:#fff;padding:10px 14px calc(12px + env(safe-area-inset-bottom));display:grid;gap:7px}
+  .g{display:grid;grid-template-columns:62px 1fr;align-items:center;gap:8px;font-size:12.5px}
+  .track{position:relative;height:12px;border-radius:6px;background:rgba(255,255,255,.14);overflow:hidden}
+  .zone{position:absolute;top:0;bottom:0;background:rgba(124,196,138,.45)}
+  .mark{position:absolute;top:-1px;width:6px;height:14px;margin-left:-3px;border-radius:3px;background:#fff}
+  .mark.bad{background:#ff8a80}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:12px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.14)}
+  .chip.on{background:rgba(124,196,138,.85);color:#08210f}
+  .chip.off{background:rgba(255,138,128,.85);color:#2a0705}
+  #camBtns{display:flex;gap:10px;margin-top:2px}
+  #camBtns button{padding:10px 12px}
+</style>
+</head>
+<body>
+<main id="home">
+  <h1>얼굴 붓기 지표 측정 <span class="pill">실시간 가이드</span></h1>
+  <p class="sub">영상은 이 폰 안에서만 분석되고 저장·전송되지 않습니다. 수치만 이 폰의 브라우저에 기록됩니다.</p>
+
+  <div class="card">
+    <div class="status" id="status">분석 엔진 불러오는 중… (처음 한 번 약 18MB)</div>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>촬영 방법</summary>
+      <ul>
+        <li>항상 같은 장소·조명에서, 폰을 <b>세로</b>로 들고 팔을 편 거리에서 찍습니다.</li>
+        <li>화면 맨 위 <b>노란 점</b>을 바라보고, 무표정으로 입을 다뭅니다.</li>
+        <li>얼굴을 <b>점선 윤곽</b>에 맞추고, 아래 막대가 모두 초록 구간에 들어가 1초 유지되면 자동 촬영됩니다.</li>
+        <li>첫 측정이 끝나면 그 얼굴 윤곽이 다음부터 가이드 선이 됩니다.</li>
+        <li>안경 벗기, 앞머리·옆머리로 볼과 턱선을 가리지 않기.</li>
+      </ul>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>1. 측정</h2>
+    <div class="row">
+      <label>측정 시점
+        <select id="session"><option value="아침">아침 (기상 직후)</option><option value="저녁">저녁</option><option value="기타">기타</option></select>
+      </label>
+      <label>체중 (kg, 선택)
+        <input type="number" id="weight" step="0.1" min="20" max="250" inputmode="decimal" placeholder="예: 58.4">
+      </label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>메모 (선택)<input type="text" id="note" maxlength="80" placeholder="예: 전날 라면, 음주, 생리 3일째"></label>
+    </div>
+    <div class="btns">
+      <button id="startBtn" disabled>카메라 켜고 측정 시작</button>
+    </div>
+    <p class="note">한 번 측정할 때 자동으로 <b>3회</b> 촬영하고, 각 촬영은 약 1초간 영상 프레임의 중앙값을 씁니다.</p>
+  </div>
+
+  <div class="card hidden" id="resultCard">
+    <h2>2. 이번 측정 결과</h2>
+    <canvas class="preview" id="preview"></canvas>
+    <div class="scroll" style="margin-top:10px"><table id="resTable"></table></div>
+    <p class="note" id="resNote"></p>
+    <div class="btns">
+      <button id="saveBtn">저장</button>
+      <button class="ghost" id="discardBtn">버리기</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. 추이</h2>
+    <div class="row"><label>지표<select id="chartMetric"></select></label></div>
+    <div style="margin-top:10px"><canvas class="chart" id="chart"></canvas></div>
+    <div class="legend"><span><span class="sw" style="background:var(--w1)"></span>얼굴 지표 (기준 대비 %)</span><span><span class="sw" style="background:var(--w2)"></span>체중 (kg)</span></div>
+    <p class="note" id="baselineNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>4. 기록</h2>
+    <div class="scroll"><table id="histTable"></table></div>
+    <div class="btns">
+      <button class="ghost" id="shareBtn">CSV 보내기</button>
+      <button class="ghost" id="dlBtn">CSV 내려받기</button>
+    </div>
+    <div class="btns">
+      <button class="ghost small" id="resetGuide">가이드 윤곽 다시 정하기</button>
+    </div>
+    <p class="note">기록은 이 폰의 이 브라우저에만 있습니다. 브라우저 데이터를 지우면 사라지니, 가끔 CSV로 보내 두세요.</p>
+  </div>
+  <p class="note">연구용 시제품입니다. 진단 목적으로 사용하지 마세요.</p>
+</main>
+
+<section id="cam" class="hidden">
+  <div id="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div id="fix"></div>
+    <div id="hint">얼굴을 점선 안에 맞추세요</div>
+  </div>
+  <div id="panel">
+    <div class="g"><span>기울기</span><div class="track" id="t_roll"></div></div>
+    <div class="g"><span>좌우 돌림</span><div class="track" id="t_yaw"></div></div>
+    <div class="g"><span>위아래</span><div class="track" id="t_pitch"></div></div>
+    <div class="g"><span>거리</span><div class="track" id="t_dist"></div></div>
+    <div class="g"><span>위치</span><div class="track" id="t_pos"></div></div>
+    <div class="chips"><span class="chip" id="c_mouth">입 다물기</span><span class="chip" id="c_eye">눈 뜨기</span><span class="chip" id="c_face">무표정</span><span class="chip" id="c_shot">촬영 0/3</span></div>
+    <div id="camBtns"><button class="ghost" id="cancelCam">취소</button></div>
+  </div>
+</section>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+const CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.2";
+const LOCAL = new URLSearchParams(location.search).has("local");
+const MODEL_URL = LOCAL ? "./face_landmarker.task" : "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+const { FaceLandmarker, FilesetResolver } = await import(LOCAL ? "./vision_bundle.mjs" : CDN + "/vision_bundle.mjs");
+
+/* ---------- constants ---------- */
+const IRIS_MM = 11.7;
+const FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+const METRICS = [
+  {key:"jawWidth",   label:"턱 폭",          unit:"mm"},
+  {key:"faceWidth",  label:"광대 폭",        unit:"mm"},
+  {key:"cheekWidth", label:"볼 폭",          unit:"mm"},
+  {key:"faceArea",   label:"얼굴 윤곽 면적", unit:"cm²"},
+  {key:"lowerArea",  label:"코 아래 면적",   unit:"cm²"},
+  {key:"fwhr",       label:"얼굴 폭/중안면 높이", unit:""},
+  {key:"eyeOpen",    label:"눈 뜬 높이 (참고)",     unit:"mm"},
+  {key:"eyeRatio",   label:"눈 높이/너비 (참고)",   unit:""},
+  {key:"browLid",    label:"눈썹-윗눈꺼풀 (참고)",  unit:"mm"},
+];
+// gate thresholds (|value| must be within)
+const GATE = {roll:2, yaw:3, pitch:3, dist:4, pos:4};   // °, °, ° vs guide, % size vs guide, % of width
+const SHOTS = 3, HOLD_MS = 1000;
+if(new URLSearchParams(location.search).has("loose")) Object.assign(GATE,{roll:90,yaw:90,pitch:90,dist:500,pos:500});
+const LS_KEY = "face-fluid-live-v1", LS_GUIDE = "face-fluid-live-guide-v1";
+const $ = id => document.getElementById(id);
+
+/* ---------- utils ---------- */
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2400); }
+const d2=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+function polyArea(p){ let s=0; for(let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length]; s+=a.x*b.y-b.x*a.y;} return Math.abs(s)/2; }
+function clipBelow(pts,yL){ const o=[]; for(let i=0;i<pts.length;i++){ const A=pts[i],B=pts[(i+1)%pts.length], ai=A.y>=yL, bi=B.y>=yL; if(ai)o.push(A); if(ai!==bi){const t=(yL-A.y)/(B.y-A.y); o.push({x:A.x+t*(B.x-A.x),y:yL});} } return o; }
+const mean=a=>a.reduce((s,v)=>s+v,0)/a.length;
+const sd=a=>{const m=mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1));};
+function median(a){ const b=[...a].sort((x,y)=>x-y), n=b.length; return n%2?b[(n-1)/2]:(b[n/2-1]+b[n/2])/2; }
+function fmt(v,dp=1){ return (v==null||!isFinite(v))?"–":v.toFixed(dp); }
+function fmtDate(ts){ const d=new Date(ts), p=n=>String(n).padStart(2,"0"); return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+const dpFor=k=>(k==="eyeRatio"||k==="fwhr")?3:1;
+const AREA_KEYS=new Set(["faceArea","lowerArea"]), UNITLESS=new Set(["eyeRatio","fwhr"]);
+
+/* ---------- storage ---------- */
+let records=[]; try{ records=JSON.parse(localStorage.getItem(LS_KEY)||"[]"); }catch(e){ records=[]; }
+function persist(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(records)); return true; }catch(e){ toast("저장 공간에 쓸 수 없습니다. CSV로 백업하세요."); return false; } }
+function loadGuide(){ try{ return JSON.parse(localStorage.getItem(LS_GUIDE)||"null"); }catch(e){ return null; } }
+function saveGuide(g){ try{ localStorage.setItem(LS_GUIDE, JSON.stringify(g)); }catch(e){} }
+let guide = loadGuide();   // {oval:[[x,y]...] normalized, cx,cy,size, pitch, aspect}
+
+/* ---------- engine ---------- */
+let lm=null;
+async function initEngine(){
+  try{
+    const fs = await FilesetResolver.forVisionTasks(LOCAL ? new URL("./wasm", location.href).href : CDN + "/wasm");
+    const opts = d => ({ baseOptions:{ modelAssetPath: MODEL_URL, delegate:d }, runningMode:"VIDEO", numFaces:1, outputFaceBlendshapes:true, outputFacialTransformationMatrixes:true });
+    try{ lm = await FaceLandmarker.createFromOptions(fs, opts("GPU")); }
+    catch(e){ lm = await FaceLandmarker.createFromOptions(fs, opts("CPU")); }
+    $("status").innerHTML = "<b>준비 완료.</b> " + (guide ? "저장된 얼굴 윤곽을 가이드로 씁니다." : "첫 측정의 얼굴 윤곽이 다음부터 가이드가 됩니다.");
+    $("startBtn").disabled=false;
+  }catch(e){ console.error(e); $("status").innerHTML="<b>분석 엔진을 불러오지 못했습니다.</b> 인터넷 연결을 확인하고 새로고침하세요. ("+(e&&e.message||e)+")"; }
+}
+
+/* ---------- per-frame analysis ---------- */
+function eulerFromMatrix(m){ const d=m.data, r=(i,j)=>d[j*4+i], k=180/Math.PI;
+  return {pitch:Math.atan2(r(2,1),r(2,2))*k, yaw:Math.asin(-Math.max(-1,Math.min(1,r(2,0))))*k}; }
+function analyzeLandmarks(res, W, H){
+  if(!res.faceLandmarks || !res.faceLandmarks.length) return null;
+  const L=res.faceLandmarks[0].map(p=>({x:p.x*W,y:p.y*H}));
+  const bs={}; (res.faceBlendshapes?.[0]?.categories||[]).forEach(c=>bs[c.categoryName]=c.score);
+  const pose = res.facialTransformationMatrixes?.[0] ? eulerFromMatrix(res.facialTransformationMatrixes[0]) : {pitch:null,yaw:null};
+  const irisPx=(d2(L[469],L[471])+d2(L[474],L[476]))/2, ipdPx=d2(L[468],L[473]), u=1/ipdPx;
+  const len=(a,b)=>d2(L[a],L[b])*u;
+  const roll=Math.atan2(L[263].y-L[33].y, L[263].x-L[33].x)*180/Math.PI;
+  const th=-roll*Math.PI/180, cx=L[1].x, cy=L[1].y;
+  const rot=p=>({x:cx+(p.x-cx)*Math.cos(th)-(p.y-cy)*Math.sin(th), y:cy+(p.x-cx)*Math.sin(th)+(p.y-cy)*Math.cos(th)});
+  const oval=FACE_OVAL.map(i=>rot(L[i])), nose=rot(L[1]);
+  const r={
+    jawWidth:len(172,397), faceWidth:len(234,454), cheekWidth:len(132,361),
+    faceArea:polyArea(oval)*u*u, lowerArea:polyArea(clipBelow(oval,nose.y))*u*u,
+    fwhr:d2(L[234],L[454])/d2(L[168],L[0]),
+    eyeOpen:(len(159,145)+len(386,374))/2,
+    eyeRatio:(d2(L[159],L[145])/d2(L[33],L[133])+d2(L[386],L[374])/d2(L[362],L[263]))/2,
+    browLid:(len(105,159)+len(334,386))/2,
+  };
+  const fw=d2(L[234],L[454]);
+  const q={ roll, yaw:pose.yaw, pitch:pose.pitch,
+    blink:Math.max(bs.eyeBlinkLeft||0,bs.eyeBlinkRight||0), smile:Math.max(bs.mouthSmileLeft||0,bs.mouthSmileRight||0),
+    jawOpen:bs.jawOpen||0, browUp:bs.browInnerUp||0, irisPx, ipdPx, ipdMmEst:ipdPx*IRIS_MM/irisPx,
+    faceFrac:fw/W*100, cxN:(L[234].x+L[454].x)/2/W, cyN:L[1].y/H };
+  return {L, r, q, ovalN: FACE_OVAL.map(i=>[L[i].x/W, L[i].y/H])};
+}
+
+/* gate: returns per-item deviation and pass flags */
+function evaluate(A, W, H){
+  const q=A.q, g=guide;
+  const tgt = g ? {cx:g.cx, cy:g.cy, size:g.size, pitch:g.pitch} : {cx:0.5, cy:0.48, size:40, pitch:null};
+  const dev = {
+    roll: q.roll,
+    yaw: q.yaw ?? 0,
+    pitch: (tgt.pitch!=null && q.pitch!=null) ? q.pitch - tgt.pitch : 0,
+    dist: (q.faceFrac/tgt.size - 1)*100,
+    pos: Math.hypot((q.cxN - tgt.cx)*W, (q.cyN - tgt.cy)*H) / W * 100,
+  };
+  const ok = {}; for(const k in GATE) ok[k] = Math.abs(dev[k]) <= GATE[k];
+  ok.mouth = q.jawOpen < 0.08; ok.eye = q.blink < 0.35; ok.face = q.smile < 0.25 && q.browUp < 0.35;
+  const all = Object.values(ok).every(Boolean);
+  return {dev, ok, all, tgt};
+}
+function hintText(ev){
+  const o=ev.ok, d=ev.dev;
+  if(!o.dist) return d.dist<0 ? "폰을 조금 더 가까이" : "폰을 조금 더 멀리";
+  if(!o.pos) return "얼굴을 점선 윤곽 안으로";
+  if(!o.yaw) return "고개를 돌리지 말고 정면으로";
+  if(!o.roll) return "고개 기울기를 바르게";
+  if(!o.pitch) return "턱 높이를 막대 초록색에 맞추세요";
+  if(!o.mouth) return "입을 편하게 다물어 주세요";
+  if(!o.eye) return "노란 점을 보며 눈을 뜨세요";
+  if(!o.face) return "무표정으로 (눈썹·입꼬리 힘 빼기)";
+  return "좋아요, 그대로…";
+}
+
+/* ---------- camera loop ---------- */
+let stream=null, running=false, lastTs=-1, holdStart=0, buffer=[], shots=[], lastFrame=null;
+const video=$("video"), ov=$("overlay");
+function setTrack(id, val, lim){ const el=$(id); const span=lim*3; const pos=Math.max(-1,Math.min(1,val/span));
+  if(!el._init){ el.innerHTML=`<div class="zone" style="left:${50-50/3}%;width:${100/3}%"></div><div class="mark"></div>`; el._init=true; }
+  const m=el.querySelector(".mark"); m.style.left=(50+pos*50)+"%"; m.classList.toggle("bad", Math.abs(val)>lim); }
+function setChip(id, on){ const c=$(id); c.classList.toggle("on",on); c.classList.toggle("off",!on); }
+
+async function startCam(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:"user", width:{ideal:1920}, height:{ideal:1920}}});
+  }catch(e){ toast("카메라를 열 수 없습니다: "+(e.name||e)); return; }
+  video.srcObject=stream; await video.play();
+  $("home").classList.add("hidden"); $("cam").classList.remove("hidden");
+  shots=[]; buffer=[]; holdStart=0; running=true; $("c_shot").textContent=`촬영 0/${SHOTS}`;
+  requestAnimationFrame(loop);
+}
+function stopCam(){ running=false; if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } $("cam").classList.add("hidden"); $("home").classList.remove("hidden"); }
+
+function drawOverlay(A, ev, W, H, progress){
+  const sw=ov.clientWidth, sh=ov.clientHeight, dpr=window.devicePixelRatio||1;
+  if(ov.width!==sw*dpr || ov.height!==sh*dpr){ ov.width=sw*dpr; ov.height=sh*dpr; }
+  const g=ov.getContext("2d"); g.setTransform(1,0,0,1,0,0); g.clearRect(0,0,ov.width,ov.height);
+  // map video coords -> canvas (object-fit: cover)
+  const s=Math.max(ov.width/W, ov.height/H), ox=(ov.width-W*s)/2, oy=(ov.height-H*s)/2;
+  const P=(x,y)=>[ox+x*s, oy+y*s];
+  g.lineWidth=3*dpr;
+  // guide
+  g.setLineDash([10*dpr,8*dpr]); g.strokeStyle= ev&&ev.all ? "rgba(124,196,138,.95)" : "rgba(255,255,255,.85)";
+  g.beginPath();
+  if(guide){ guide.oval.forEach(([x,y],i)=>{ const [a,b]=P(x*W,y*H); i?g.lineTo(a,b):g.moveTo(a,b); }); g.closePath(); }
+  else { const rw=W*0.40/2*1.0, rh=rw*1.32; const [a,b]=P(W*0.5,H*0.48-rh*0.08); g.ellipse(a,b,rw*s,rh*s,0,0,Math.PI*2); }
+  g.stroke(); g.setLineDash([]);
+  // live face outline
+  if(A){ g.strokeStyle="rgba(255,209,102,.9)"; g.lineWidth=2*dpr; g.beginPath();
+    FACE_OVAL.forEach((i,k)=>{ const [a,b]=P(A.L[i].x,A.L[i].y); k?g.lineTo(a,b):g.moveTo(a,b); }); g.closePath(); g.stroke(); }
+  // progress ring
+  if(progress>0){ const a=ov.width/2, b=ov.height-40*dpr; g.strokeStyle="rgba(124,196,138,.95)"; g.lineWidth=6*dpr; g.beginPath(); g.arc(a,b,22*dpr,-Math.PI/2,-Math.PI/2+progress*2*Math.PI); g.stroke(); }
+}
+
+function loop(){
+  if(!running) return;
+  const W=video.videoWidth, H=video.videoHeight;
+  if(W && H && video.currentTime!==lastTs){
+    lastTs=video.currentTime;
+    let A=null, ev=null;
+    try{ A=analyzeLandmarks(lm.detectForVideo(video, performance.now()), W, H); }catch(e){ console.error(e); }
+    let progress=0;
+    if(A){
+      ev=evaluate(A,W,H);
+      setTrack("t_roll",ev.dev.roll,GATE.roll); setTrack("t_yaw",ev.dev.yaw,GATE.yaw); setTrack("t_pitch",ev.dev.pitch,GATE.pitch);
+      setTrack("t_dist",ev.dev.dist,GATE.dist); setTrack("t_pos",ev.dev.pos,GATE.pos);
+      setChip("c_mouth",ev.ok.mouth); setChip("c_eye",ev.ok.eye); setChip("c_face",ev.ok.face);
+      $("hint").textContent=hintText(ev);
+      const now=performance.now();
+      if(ev.all){ if(!holdStart){ holdStart=now; buffer=[]; } buffer.push(A); progress=Math.min(1,(now-holdStart)/HOLD_MS);
+        if(now-holdStart>=HOLD_MS && buffer.length>=5){ captureShot(buffer, W, H); holdStart=0; buffer=[]; }
+      } else { holdStart=0; buffer=[]; }
+    } else { $("hint").textContent="얼굴이 보이지 않습니다"; holdStart=0; buffer=[]; }
+    drawOverlay(A, ev, W, H, progress);
+  }
+  requestAnimationFrame(loop);
+}
+
+function aggregate(list){ // median per field
+  const r={}, q={}; METRICS.forEach(({key})=>r[key]=median(list.map(a=>a.r[key])));
+  Object.keys(list[0].q).forEach(k=>{ const v=list.map(a=>a.q[k]).filter(x=>x!=null&&isFinite(x)); q[k]=v.length?median(v):null; });
+  return {r,q};
+}
+function captureShot(buf, W, H){
+  const agg=aggregate(buf); agg.frames=buf.length; agg.ovalN=buf[Math.floor(buf.length/2)].ovalN; agg.L=buf[Math.floor(buf.length/2)].L;
+  shots.push(agg);
+  if(navigator.vibrate) try{ navigator.vibrate(60); }catch(e){}
+  $("c_shot").textContent=`촬영 ${shots.length}/${SHOTS}`;
+  if(shots.length===1){ // keep a still for the result view (not stored)
+    const c=$("preview"); c.width=W; c.height=H; c.getContext("2d").drawImage(video,0,0,W,H); lastFrame={L:agg.L};
+  }
+  if(shots.length>=SHOTS){ stopCam(); showResult(); }
+  else toast(`${shots.length}회 촬영됨 — 그대로 유지하세요`);
+}
+
+/* ---------- result ---------- */
+let pending=null;
+function sorted(){ return [...records].sort((a,b)=>a.ts-b.ts); }
+function baselineSet(){ return sorted().slice(0,5); }
+function baselineVals(){ const b=baselineSet(); if(!b.length) return null; const o={}; METRICS.forEach(({key})=>o[key]=median(b.map(r=>r.r[key]))); return o; }
+function pct(v,key,base){ if(!base||!base[key]) return null; return (v/base[key]-1)*100; }
+function personalIPD(extra){ const v=sorted().slice(0,10).map(r=>r.q.ipdMmEst).filter(x=>isFinite(x)); if(extra) v.push(extra); return v.length?median(v):63; }
+function toMM(r,ipd){ const o={}; METRICS.forEach(({key})=>{ const v=r[key]; o[key]=UNITLESS.has(key)?v:AREA_KEYS.has(key)?v*ipd*ipd/100:v*ipd; }); return o; }
+
+function showResult(){
+  const r={}, cv={}; METRICS.forEach(({key})=>{ const v=shots.map(s=>s.r[key]); r[key]=median(v); cv[key]=v.length>1? sd(v)/mean(v)*100 : null; });
+  const qAll=aggregate(shots.map(s=>({r:s.r,q:s.q}))).q;
+  pending={r, q:qAll, cv, ovalN:shots[0].ovalN, frames:shots.reduce((s,x)=>s+x.frames,0)};
+  // draw landmarks on still
+  const c=$("preview"), g=c.getContext("2d"), L=lastFrame.L; g.lineWidth=Math.max(2,c.width/400);
+  g.strokeStyle="rgba(95,184,177,.9)"; g.beginPath(); FACE_OVAL.forEach((i,k)=>{const p=L[i]; k?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y);}); g.closePath(); g.stroke();
+  const line=(a,b,col)=>{ g.strokeStyle=col; g.beginPath(); g.moveTo(L[a].x,L[a].y); g.lineTo(L[b].x,L[b].y); g.stroke(); };
+  line(172,397,"#e39a63"); line(234,454,"#e39a63"); line(132,361,"#e39a63");
+  const base=baselineVals(), mm=toMM(r, personalIPD(qAll.ipdMmEst));
+  $("resTable").innerHTML=`<tr><th>지표</th><th>값</th><th>3회 CV</th><th>기준 대비</th></tr>`+METRICS.map(({key,label,unit})=>{
+    const p=pct(r[key],key,base), c=cv[key], cls=c==null?"":c<1?"ok":c<2?"wn":"ng";
+    return `<tr><td>${label}</td><td>${fmt(mm[key],dpFor(key))} ${unit}</td><td><span class="${cls}" style="padding:1px 6px;border-radius:6px">${fmt(c,2)}%</span></td><td class="${p>0?"pos":"neg"}">${p==null?"–":(p>0?"+":"")+fmt(p)+"%"}</td></tr>`; }).join("");
+  $("resNote").textContent = guide ? "값은 3회 촬영의 중앙값입니다." : "값은 3회 촬영의 중앙값입니다. 저장하면 이번 얼굴 윤곽이 다음부터 가이드 선이 됩니다.";
+  $("resultCard").classList.remove("hidden"); $("resultCard").scrollIntoView({behavior:"smooth"});
+}
+$("saveBtn").addEventListener("click", ()=>{
+  if(!pending) return;
+  const w=parseFloat($("weight").value);
+  const rec={ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", weight:isFinite(w)?w:null, note:$("note").value.trim(), r:pending.r, q:pending.q, cv:pending.cv, frames:pending.frames, v:3 };
+  records.push(rec);
+  if(!guide){ guide={ oval:pending.ovalN, cx:pending.q.cxN, cy:pending.q.cyN, size:pending.q.faceFrac, pitch:pending.q.pitch }; saveGuide(guide); }
+  persist(); pending=null; $("resultCard").classList.add("hidden"); $("note").value=""; toast("저장했습니다"); renderAll();
+});
+$("discardBtn").addEventListener("click", ()=>{ pending=null; $("resultCard").classList.add("hidden"); });
+
+/* ---------- chart / history ---------- */
+function drawChart(){
+  const cv=$("chart"), dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight;
+  cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.scale(dpr,dpr); g.clearRect(0,0,W,H);
+  const cs=getComputedStyle(document.documentElement), c1=cs.getPropertyValue("--w1").trim(), c2=cs.getPropertyValue("--w2").trim(), cm=cs.getPropertyValue("--muted").trim(), cl=cs.getPropertyValue("--line").trim();
+  const rs=sorted(), key=$("chartMetric").value, base=baselineVals(); g.font="12px sans-serif"; g.fillStyle=cm;
+  if(rs.length<2||!base){ g.fillText("기록이 2개 이상 쌓이면 추이가 표시됩니다.",10,H/2); $("baselineNote").textContent=""; return; }
+  const pad={l:40,r:44,t:12,b:26}, iw=W-pad.l-pad.r, ih=H-pad.t-pad.b, t0=rs[0].ts, t1=rs[rs.length-1].ts;
+  const X=t=>pad.l+(t1===t0?iw/2:(t-t0)/(t1-t0)*iw);
+  const ys=rs.map(r=>pct(r.r[key],key,base)); let lo=Math.min(...ys,-1), hi=Math.max(...ys,1); const sp=(hi-lo)*.1; lo-=sp; hi+=sp;
+  const Y=v=>pad.t+(hi-v)/(hi-lo)*ih;
+  g.strokeStyle=cl; g.lineWidth=1; [lo,0,hi].forEach(v=>{ g.beginPath(); g.moveTo(pad.l,Y(v)); g.lineTo(W-pad.r,Y(v)); g.stroke(); g.fillText((v>0?"+":"")+v.toFixed(1)+"%",2,Y(v)+4); });
+  const ws=rs.filter(r=>r.weight!=null);
+  if(ws.length){ let wl=Math.min(...ws.map(r=>r.weight)), wh=Math.max(...ws.map(r=>r.weight)); if(wh-wl<1){const m=(wh+wl)/2; wl=m-.5; wh=m+.5;}
+    const YW=v=>pad.t+(wh-v)/(wh-wl)*ih; g.fillStyle=c2; g.fillText(wh.toFixed(1),W-pad.r+4,YW(wh)+4); g.fillText(wl.toFixed(1),W-pad.r+4,YW(wl)+4);
+    g.strokeStyle=c2; g.lineWidth=2; g.beginPath(); ws.forEach((r,i)=>{ i?g.lineTo(X(r.ts),YW(r.weight)):g.moveTo(X(r.ts),YW(r.weight)); }); g.stroke();
+    ws.forEach(r=>{ g.beginPath(); g.arc(X(r.ts),YW(r.weight),3,0,7); g.fill(); }); }
+  g.strokeStyle=c1; g.fillStyle=c1; g.lineWidth=2; g.beginPath(); rs.forEach((r,i)=>{ const y=Y(ys[i]); i?g.lineTo(X(r.ts),y):g.moveTo(X(r.ts),y); }); g.stroke();
+  rs.forEach((r,i)=>{ g.beginPath(); g.arc(X(r.ts),Y(ys[i]),3.5,0,7); g.fill(); });
+  g.fillStyle=cm; g.fillText(fmtDate(t0),pad.l,H-6); const e=fmtDate(t1); g.fillText(e,W-pad.r-g.measureText(e).width,H-6);
+  $("baselineNote").textContent=`기준값 = 처음 ${baselineSet().length}회 측정의 중앙값. 0% 위는 기준보다 큼(부음 쪽), 아래는 작음.`;
+}
+function renderHistory(){
+  const rs=sorted().reverse(), base=baselineVals(), ipd=personalIPD(), d=v=>v==null?"–":(v>0?"+":"")+fmt(v)+"%";
+  if(!rs.length){ $("histTable").innerHTML=`<tr><td class="status">아직 기록이 없습니다.</td></tr>`; return; }
+  $("histTable").innerHTML=`<tr><th>시각</th><th>시점</th><th>체중</th><th>턱 폭</th><th>Δ</th><th>광대 폭</th><th>Δ</th><th>턱 CV</th><th></th></tr>`+
+    rs.map(r=>{ const m=toMM(r.r,ipd), pj=pct(r.r.jawWidth,"jawWidth",base), pf=pct(r.r.faceWidth,"faceWidth",base);
+      return `<tr><td>${fmtDate(r.ts)}</td><td>${r.session}</td><td>${r.weight!=null?fmt(r.weight):"–"}</td><td>${fmt(m.jawWidth)}</td><td class="${pj>0?"pos":"neg"}">${d(pj)}</td><td>${fmt(m.faceWidth)}</td><td class="${pf>0?"pos":"neg"}">${d(pf)}</td><td>${fmt(r.cv?.jawWidth,2)}%</td><td><button class="small danger" data-del="${r.id}">삭제</button></td></tr>`; }).join("");
+}
+function renderAll(){ renderHistory(); drawChart(); }
+$("histTable").addEventListener("click", e=>{ const id=e.target?.dataset?.del; if(!id) return;
+  if(e.target.dataset.armed){ records=records.filter(r=>r.id!==id); persist(); renderAll(); }
+  else { e.target.dataset.armed="1"; e.target.textContent="확인"; setTimeout(()=>{ if(e.target){ delete e.target.dataset.armed; e.target.textContent="삭제"; } },2500); } });
+
+/* ---------- CSV ---------- */
+function toCSV(){
+  const ipd=personalIPD(), f=(v,d)=>(v==null||!isFinite(v))?"":v.toFixed(d), esc=s=>`"${String(s??"").replace(/"/g,'""')}"`;
+  const head=["timestamp","session","camera","weight_kg","note",...METRICS.map(m=>m.key+"_mm"),...METRICS.map(m=>m.key+"_ipdratio"),...METRICS.map(m=>m.key+"_cv3"),"roll_deg","yaw_deg","pitch_deg","blink","smile","jawOpen","browUp","iris_px","ipd_px","ipd_mm_est","face_frac_pct","frames"];
+  const lines=sorted().map(r=>{ const mm=toMM(r.r,ipd); return [new Date(r.ts).toISOString(),r.session,r.camera,r.weight??"",esc(r.note),
+    ...METRICS.map(m=>f(mm[m.key],3)),...METRICS.map(m=>f(r.r[m.key],5)),...METRICS.map(m=>f(r.cv?.[m.key],3)),
+    f(r.q.roll,2),f(r.q.yaw,2),f(r.q.pitch,2),f(r.q.blink,3),f(r.q.smile,3),f(r.q.jawOpen,3),f(r.q.browUp,3),f(r.q.irisPx,1),f(r.q.ipdPx,1),f(r.q.ipdMmEst,2),f(r.q.faceFrac,1),r.frames??""].join(","); });
+  return "﻿"+[head.join(","),...lines].join("\n");
+}
+const csvName=()=>"face-fluid-"+new Date().toISOString().slice(0,10)+".csv";
+$("dlBtn").addEventListener("click", ()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([toCSV()],{type:"text/csv"})); a.download=csvName(); a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); });
+$("shareBtn").addEventListener("click", async ()=>{
+  const file=new File([toCSV()], csvName(), {type:"text/csv"});
+  try{ if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:"얼굴 붓기 기록"}); } else { await navigator.clipboard.writeText(toCSV()); toast("CSV를 복사했습니다"); } }
+  catch(e){ if(e.name!=="AbortError") toast("보내기를 할 수 없습니다"); } });
+$("resetGuide").addEventListener("click", e=>{ if(e.target.dataset.armed){ guide=null; try{localStorage.removeItem(LS_GUIDE);}catch(_){} toast("다음 측정의 윤곽이 새 가이드가 됩니다"); e.target.textContent="가이드 윤곽 다시 정하기"; delete e.target.dataset.armed; }
+  else { e.target.dataset.armed="1"; e.target.textContent="한 번 더 누르면 초기화"; setTimeout(()=>{ delete e.target.dataset.armed; e.target.textContent="가이드 윤곽 다시 정하기"; },2500); } });
+
+/* ---------- wiring ---------- */
+$("chartMetric").innerHTML=METRICS.map(m=>`<option value="${m.key}"${m.key==="jawWidth"?" selected":""}>${m.label}</option>`).join("");
+$("chartMetric").addEventListener("change", drawChart);
+$("startBtn").addEventListener("click", startCam);
+$("cancelCam").addEventListener("click", stopCam);
+window.addEventListener("resize", ()=>{ clearTimeout(window._rz); window._rz=setTimeout(drawChart,150); });
+renderAll();
+initEngine();
+</script>
+</body>
+</html>
