@@ -85,7 +85,7 @@
       <summary>촬영 방법</summary>
       <ul>
         <li>폰을 <b>세로로 똑바로 세워 눈높이</b>에 들고(아래에서 올려다보지 않게), 팔을 편 거리에서 얼굴이 큰 타원 안에 대략 들어오게 합니다.</li>
-        <li>화면 맨 위 <b>노란 점</b>을 5~6초 편하게 바라보면 자동으로 끝납니다. 정확히 맞출 필요 없습니다.</li>
+        <li>화면 속 <b>내 눈</b>을 5~6초 편하게 바라보면 자동으로 끝납니다. 정확히 맞출 필요 없습니다.</li>
         <li>자세가 벗어나면 화면과 음성으로 한 가지씩 알려 줍니다. 가장 중요한 건 <b>턱 높이</b>입니다. 오른쪽 세로 막대의 표시가 초록 구간에 있게 해 주세요.</li>
         <li>이마에 힘을 주지 말고 눈썹을 편하게 둡니다.</li>
         <li>폰과 얼굴의 거리도 매번 비슷해야 합니다. "조금 더 가까이/멀리" 안내가 나오면 팔 길이를 조절하세요.</li>
@@ -148,16 +148,15 @@
   <div id="stage">
     <video id="video" playsinline muted></video>
     <canvas id="overlay"></canvas>
-    <div id="fix"></div>
     <div id="pg" style="position:absolute;right:10px;top:30%;height:40%;width:14px;border-radius:7px;background:rgba(255,255,255,.18)">
       <div style="position:absolute;left:0;right:0;top:40%;height:20%;background:rgba(124,196,138,.55);border-radius:4px"></div>
       <div id="pgm" style="position:absolute;left:-4px;width:22px;height:6px;margin-top:-3px;border-radius:3px;background:#fff;top:50%"></div>
     </div>
     <div style="position:absolute;right:2px;top:calc(30% - 22px);font-size:11px;color:#fff;opacity:.8">턱 높이</div>
-    <div id="hint">노란 점을 편하게 바라보세요</div>
+    <div id="hint">화면 속 내 눈을 편하게 바라보세요</div>
   </div>
   <div id="panel">
-    <div id="phase" style="font-size:14px;font-weight:600">얼굴을 원 안에 두고 노란 점을 바라보세요</div>
+    <div id="phase" style="font-size:14px;font-weight:600">얼굴을 원 안에 두고 화면 속 내 눈을 바라보세요</div>
     <div class="track" style="height:10px"><div id="prog" style="position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(124,196,138,.9);border-radius:6px"></div></div>
     <div id="camBtns"><button class="ghost" id="voiceBtn">음성 안내 켬</button><button class="ghost" id="cancelCam">취소</button></div>
     <div id="diagLine" style="font-size:11px;opacity:.6"></div>
@@ -188,7 +187,7 @@ const METRICS = [
   {key:"browLid",    label:"눈썹-윗눈꺼풀 (참고)",  unit:"mm"},
 ];
 // frame acceptance (loose) — the rest is corrected or filtered by scoring
-const ACC = {yaw:10, pitchDev:2.5, distDev:5, phoneTilt:12, roll:15, sizeMin:18, sizeMax:75, center:22, browEx:0.15};
+const ACC = {yaw:6, pitchDev:2.5, distDev:5, phoneTilt:12, roll:15, sizeMin:18, sizeMax:75, center:22, browEx:0.3};
 if(QS.has("loose")) Object.assign(ACC,{yaw:90,pitchDev:90,distDev:500,phoneTilt:999,roll:90,sizeMin:1,sizeMax:100,center:100,browEx:9});
 const WINDOW_MS = 6000, SEGMENTS = 3, MAX_MS = 25000;
 const LS_KEY = "face-fluid-live-v1";
@@ -221,7 +220,7 @@ async function initEngine(){
     const opts = d => ({ baseOptions:{ modelAssetPath: MODEL_URL, delegate:d }, runningMode:"VIDEO", numFaces:1, outputFaceBlendshapes:true, outputFacialTransformationMatrixes:true });
     if(QS.has("gpu")){ try{ lm=await FaceLandmarker.createFromOptions(fs, opts("GPU")); delegateName="GPU"; }catch(e){ lm=null; } }
     if(!lm){ lm=await FaceLandmarker.createFromOptions(fs, opts("CPU")); delegateName="CPU"; }
-    $("status").innerHTML = "<b>준비 완료.</b> 측정 시작을 누르고 노란 점을 5~6초 바라보면 끝납니다.";
+    $("status").innerHTML = "<b>준비 완료.</b> 측정 시작을 누르고 화면 속 내 눈을 5~6초 바라보면 끝납니다.";
     $("startBtn").disabled=false;
   }catch(e){ console.error(e); $("status").innerHTML="<b>분석 엔진을 불러오지 못했습니다.</b> 인터넷 연결을 확인하고 새로고침하세요. ("+(e&&e.message||e)+")"; }
 }
@@ -307,7 +306,7 @@ function check(A){
   return {accept:true, score};
 }
 const HINTS = { far:"폰을 조금 더 가까이", near:"폰을 조금 더 멀리", center:"얼굴을 원 가운데로", yaw:"고개를 돌리지 말고 정면으로",
-  chinHigh:"턱을 살짝 당기세요", chinLow:"턱을 살짝 드세요", phone:"폰을 똑바로 세워 눈높이로 드세요", brow:"이마 힘을 빼고 눈썹을 내리세요", lock:"노란 점을 편하게 바라보세요", roll:"고개를 똑바로", blink:"노란 점을 보며 눈을 뜨세요", mouth:"입을 편하게 다물어 주세요", smile:"편안한 표정으로", none:"얼굴이 보이지 않습니다" };
+  chinHigh:"턱을 살짝 당기세요", chinLow:"턱을 살짝 드세요", phone:"폰을 똑바로 세워 눈높이로 드세요", brow:"이마 힘을 빼고 눈썹을 내리세요", lock:"화면 속 내 눈을 편하게 바라보세요", roll:"고개를 똑바로", blink:"눈을 편하게 뜨세요", mouth:"입을 편하게 다물어 주세요", smile:"편안한 표정으로", none:"얼굴이 보이지 않습니다" };
 
 /* ---------- voice ---------- */
 let voiceOn = true, lastSpoken="", lastSpeakT=0;
@@ -326,8 +325,8 @@ async function startCam(){
   video.srcObject=stream; try{ await video.play(); }catch(e){}
   $("home").classList.add("hidden"); $("cam").classList.remove("hidden");
   REF=personalRef(); lockFrames=[]; frames=[]; accMs=0; lastFrameT=0; startT=performance.now(); badSince=0; stillTaken=false; running=true;
-  $("prog").style.width="0%"; $("phase").textContent="얼굴을 원 안에 두고 노란 점을 바라보세요";
-  speak("노란 점을 편하게 바라보세요", true);
+  $("prog").style.width="0%"; $("phase").textContent="얼굴을 원 안에 두고 화면 속 내 눈을 바라보세요";
+  speak("화면 속 내 눈을 편하게 바라보세요", true);
   requestAnimationFrame(loop);
 }
 function stopCam(){ running=false; if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } try{speechSynthesis.cancel();}catch(e){} $("cam").classList.add("hidden"); $("home").classList.remove("hidden"); }
@@ -362,7 +361,7 @@ function loop(){
     const dt = lastFrameT ? Math.min(200, now-lastFrameT) : 0; lastFrameT=now;
     if(c.accept){
       accMs += dt; A.t=accMs; A.score=c.score; frames.push({r:A.r, r2d:A.r2d, q:A.q, t:accMs, score:c.score}); badSince=0;
-      $("hint").textContent="좋아요, 그대로 노란 점을 보세요";
+      $("hint").textContent="좋아요, 그대로 계세요";
       if(!stillTaken && accMs>WINDOW_MS*0.4){ const p=$("preview"); p.width=W; p.height=H; p.getContext("2d").drawImage(work,0,0,W,H); lastStill={L:A.L}; stillTaken=true; }
     } else {
       if(!badSince) badSince=now;
