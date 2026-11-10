@@ -86,7 +86,8 @@
       <ul>
         <li>폰을 <b>세로</b>로 들고 팔을 편 거리에서, 얼굴이 큰 타원 안에 대략 들어오게 합니다.</li>
         <li>화면 맨 위 <b>노란 점</b>을 5~6초 편하게 바라보면 자동으로 끝납니다. 정확히 맞출 필요 없습니다.</li>
-        <li>자세가 많이 벗어나면 화면과 음성으로 한 가지씩 알려 줍니다.</li>
+        <li>자세가 벗어나면 화면과 음성으로 한 가지씩 알려 줍니다. 가장 중요한 건 <b>턱 높이</b>입니다. 오른쪽 세로 막대의 표시가 초록 구간에 있게 해 주세요.</li>
+        <li>이마에 힘을 주지 말고 눈썹을 편하게 둡니다.</li>
         <li>가능하면 같은 장소·조명에서, 안경을 벗고, 머리카락이 볼과 턱선을 가리지 않게 합니다.</li>
       </ul>
     </details>
@@ -147,6 +148,11 @@
     <video id="video" playsinline muted></video>
     <canvas id="overlay"></canvas>
     <div id="fix"></div>
+    <div id="pg" style="position:absolute;right:10px;top:30%;height:40%;width:14px;border-radius:7px;background:rgba(255,255,255,.18)">
+      <div style="position:absolute;left:0;right:0;top:40%;height:20%;background:rgba(124,196,138,.55);border-radius:4px"></div>
+      <div id="pgm" style="position:absolute;left:-4px;width:22px;height:6px;margin-top:-3px;border-radius:3px;background:#fff;top:50%"></div>
+    </div>
+    <div style="position:absolute;right:2px;top:calc(30% - 22px);font-size:11px;color:#fff;opacity:.8">턱 높이</div>
     <div id="hint">노란 점을 편하게 바라보세요</div>
   </div>
   <div id="panel">
@@ -181,8 +187,8 @@ const METRICS = [
   {key:"browLid",    label:"눈썹-윗눈꺼풀 (참고)",  unit:"mm"},
 ];
 // frame acceptance (loose) — the rest is corrected or filtered by scoring
-const ACC = {yaw:12, pitchDev:12, roll:15, sizeMin:18, sizeMax:75, center:22};
-if(QS.has("loose")) Object.assign(ACC,{yaw:90,pitchDev:90,roll:90,sizeMin:1,sizeMax:100,center:100});
+const ACC = {yaw:10, pitchDev:2, roll:15, sizeMin:18, sizeMax:75, center:22, browEx:0.15};
+if(QS.has("loose")) Object.assign(ACC,{yaw:90,pitchDev:90,roll:90,sizeMin:1,sizeMax:100,center:100,browEx:9});
 const WINDOW_MS = 6000, SEGMENTS = 3, MAX_MS = 25000;
 const LS_KEY = "face-fluid-live-v1";
 const $ = id => document.getElementById(id);
@@ -268,25 +274,31 @@ function personalRef(){
 let REF = personalRef();
 
 /* frame check: returns {accept, reason, score} */
+let lockFrames=[];
+function pitchTarget(){ if(REF.pitch!=null) return REF.pitch; return lockFrames.length>=10 ? median(lockFrames) : null; }
 function check(A){
-  const q=A.q, pitchDev = REF.pitch!=null ? q.pitch-REF.pitch : 0;
+  const q=A.q;
+  if(REF.pitch==null && lockFrames.length<10 && Math.abs(q.yaw)<=ACC.yaw) lockFrames.push(q.pitch);
+  const tgt=pitchTarget(); const pitchDev = tgt!=null ? q.pitch-tgt : 0; A.pitchDev=pitchDev;
   const offC = Math.hypot(q.cxN-0.5, q.cyN-0.5)*100;
   if(q.faceFrac < ACC.sizeMin) return {accept:false, reason:"far"};
   if(q.faceFrac > ACC.sizeMax) return {accept:false, reason:"near"};
   if(offC > ACC.center) return {accept:false, reason:"center"};
   if(Math.abs(q.yaw) > ACC.yaw) return {accept:false, reason:"yaw"};
-  if(Math.abs(pitchDev) > ACC.pitchDev) return {accept:false, reason:"pitch", dir: pitchDev};
+  if(tgt==null) return {accept:false, reason:"lock"};
+  if(Math.abs(pitchDev) > ACC.pitchDev) return {accept:false, reason: pitchDev>0 ? "pitchUp" : "pitchDown"};
   if(Math.abs(q.roll) > ACC.roll) return {accept:false, reason:"roll"};
   if(q.blink > 0.45) return {accept:false, reason:"blink"};
   // expression: compared with this person's usual face; filtered silently unless it persists
   const jawEx=Math.max(0,q.jawOpen-(REF.jawOpen+0.06)), smEx=Math.max(0,q.smile-(REF.smile+0.2));
   if(jawEx>0) return {accept:false, reason:"mouth"};
   if(smEx>0) return {accept:false, reason:"smile"};
-  const score = Math.abs(q.yaw)/4 + Math.abs(pitchDev)/4 + Math.abs(q.roll)/10 + q.jawOpen*5 + q.smile*2 + q.blink;
+  if(q.browUp > REF.browUp + ACC.browEx) return {accept:false, reason:"brow"};
+  const score = Math.abs(q.yaw)/4 + Math.abs(pitchDev)/1 + Math.abs(q.roll)/10 + q.jawOpen*5 + q.smile*2 + q.blink;
   return {accept:true, score};
 }
 const HINTS = { far:"폰을 조금 더 가까이", near:"폰을 조금 더 멀리", center:"얼굴을 원 가운데로", yaw:"고개를 돌리지 말고 정면으로",
-  pitch:"턱 높이를 평소처럼", roll:"고개를 똑바로", blink:"노란 점을 보며 눈을 뜨세요", mouth:"입을 편하게 다물어 주세요", smile:"편안한 표정으로", none:"얼굴이 보이지 않습니다" };
+  pitchUp:"턱을 살짝 당기세요", pitchDown:"턱을 살짝 드세요", brow:"이마 힘을 빼고 눈썹을 내리세요", lock:"노란 점을 편하게 바라보세요", roll:"고개를 똑바로", blink:"노란 점을 보며 눈을 뜨세요", mouth:"입을 편하게 다물어 주세요", smile:"편안한 표정으로", none:"얼굴이 보이지 않습니다" };
 
 /* ---------- voice ---------- */
 let voiceOn = true, lastSpoken="", lastSpeakT=0;
@@ -304,7 +316,7 @@ async function startCam(){
   catch(e){ toast("카메라를 열 수 없습니다: "+(e.name||e)); return; }
   video.srcObject=stream; try{ await video.play(); }catch(e){}
   $("home").classList.add("hidden"); $("cam").classList.remove("hidden");
-  REF=personalRef(); frames=[]; accMs=0; lastFrameT=0; startT=performance.now(); badSince=0; stillTaken=false; running=true;
+  REF=personalRef(); lockFrames=[]; frames=[]; accMs=0; lastFrameT=0; startT=performance.now(); badSince=0; stillTaken=false; running=true;
   $("prog").style.width="0%"; $("phase").textContent="얼굴을 원 안에 두고 노란 점을 바라보세요";
   speak("노란 점을 편하게 바라보세요", true);
   requestAnimationFrame(loop);
@@ -337,6 +349,7 @@ function loop(){
     let A=null; try{ A=analyzeLandmarks(detect(work), W, H); lastErr=""; }catch(e){ lastErr=String(e&&e.message||e).slice(0,80); }
     diagN++; if(A) diagFace++;
     const c = A ? check(A) : {accept:false, reason:"none"};
+    if(A && A.pitchDev!=null){ const v=Math.max(-1,Math.min(1,A.pitchDev/(ACC.pitchDev*2.5))); const m=$("pgm"); m.style.top=(50 - v*50)+"%"; m.style.background=Math.abs(A.pitchDev)<=ACC.pitchDev?"#7cc48a":"#ff8a80"; }
     const dt = lastFrameT ? Math.min(200, now-lastFrameT) : 0; lastFrameT=now;
     if(c.accept){
       accMs += dt; A.t=accMs; A.score=c.score; frames.push({r:A.r, r2d:A.r2d, q:A.q, t:accMs, score:c.score}); badSince=0;
