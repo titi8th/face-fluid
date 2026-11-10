@@ -286,7 +286,7 @@ function check(A){
   if(offC > ACC.center) return {accept:false, reason:"center"};
   if(Math.abs(q.yaw) > ACC.yaw) return {accept:false, reason:"yaw"};
   if(tgt==null) return {accept:false, reason:"lock"};
-  if(Math.abs(pitchDev) > ACC.pitchDev) return {accept:false, reason: pitchDev>0 ? "pitchUp" : "pitchDown"};
+  if(Math.abs(pitchDev) > ACC.pitchDev) return {accept:false, reason: pitchDev>0 ? "chinLow" : "chinHigh"};
   if(Math.abs(q.roll) > ACC.roll) return {accept:false, reason:"roll"};
   if(q.blink > 0.45) return {accept:false, reason:"blink"};
   // expression: compared with this person's usual face; filtered silently unless it persists
@@ -298,7 +298,7 @@ function check(A){
   return {accept:true, score};
 }
 const HINTS = { far:"폰을 조금 더 가까이", near:"폰을 조금 더 멀리", center:"얼굴을 원 가운데로", yaw:"고개를 돌리지 말고 정면으로",
-  pitchUp:"턱을 살짝 당기세요", pitchDown:"턱을 살짝 드세요", brow:"이마 힘을 빼고 눈썹을 내리세요", lock:"노란 점을 편하게 바라보세요", roll:"고개를 똑바로", blink:"노란 점을 보며 눈을 뜨세요", mouth:"입을 편하게 다물어 주세요", smile:"편안한 표정으로", none:"얼굴이 보이지 않습니다" };
+  chinHigh:"턱을 살짝 당기세요", chinLow:"턱을 살짝 드세요", brow:"이마 힘을 빼고 눈썹을 내리세요", lock:"노란 점을 편하게 바라보세요", roll:"고개를 똑바로", blink:"노란 점을 보며 눈을 뜨세요", mouth:"입을 편하게 다물어 주세요", smile:"편안한 표정으로", none:"얼굴이 보이지 않습니다" };
 
 /* ---------- voice ---------- */
 let voiceOn = true, lastSpoken="", lastSpeakT=0;
@@ -349,7 +349,7 @@ function loop(){
     let A=null; try{ A=analyzeLandmarks(detect(work), W, H); lastErr=""; }catch(e){ lastErr=String(e&&e.message||e).slice(0,80); }
     diagN++; if(A) diagFace++;
     const c = A ? check(A) : {accept:false, reason:"none"};
-    if(A && A.pitchDev!=null){ const v=Math.max(-1,Math.min(1,A.pitchDev/(ACC.pitchDev*2.5))); const m=$("pgm"); m.style.top=(50 - v*50)+"%"; m.style.background=Math.abs(A.pitchDev)<=ACC.pitchDev?"#7cc48a":"#ff8a80"; }
+    if(A && A.pitchDev!=null){ const v=Math.max(-1,Math.min(1,-A.pitchDev/(ACC.pitchDev*2.5)));  /* up = chin up */ const m=$("pgm"); m.style.top=(50 - v*50)+"%"; m.style.background=Math.abs(A.pitchDev)<=ACC.pitchDev?"#7cc48a":"#ff8a80"; }
     const dt = lastFrameT ? Math.min(200, now-lastFrameT) : 0; lastFrameT=now;
     if(c.accept){
       accMs += dt; A.t=accMs; A.score=c.score; frames.push({r:A.r, r2d:A.r2d, q:A.q, t:accMs, score:c.score}); badSince=0;
