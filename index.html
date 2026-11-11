@@ -89,7 +89,7 @@
         <li>자세가 벗어나면 화면과 음성으로 한 가지씩 알려 줍니다. 가장 중요한 건 <b>턱 높이</b>입니다. 오른쪽 세로 막대의 표시가 초록 구간에 있게 해 주세요.</li>
         <li>이마에 힘을 주지 말고 눈썹을 편하게 둡니다.</li>
         <li>폰과 얼굴의 거리도 매번 비슷해야 합니다. "조금 더 가까이/멀리" 안내가 나오면 팔 길이를 조절하세요.</li>
-        <li>"표준 사진도 저장"을 켜면 6초 중 자세가 가장 바른 순간의 사진 1장을 결과 화면에서 내려받을 수 있습니다(폰의 다운로드 폴더, 서버 전송 없음). 얼굴 나이 분석 노트북에 이 사진들을 올리면 됩니다.</li>
+        <li>"표준 사진도 저장"을 켜면 6초 동안 <b>사진 3장</b>(2초마다 1장, 가능하면 카메라 최대 해상도)을 찍어 결과 화면에서 내려받습니다. 처음 한 번 크롬이 "여러 파일 다운로드 허용"을 물으면 허용하세요(폰의 다운로드 폴더, 서버 전송 없음). 얼굴 나이 분석 노트북에 이 사진들을 올리면 됩니다.</li>
         <li>가능하면 같은 장소·조명에서, <b>안경을 벗고</b>, 머리카락이 볼과 턱선을 가리지 않게 합니다. 안경을 써야 한다면 매번 같은 안경을 쓰고 "안경을 쓴 채로 측정"에 체크하세요.</li>
       </ul>
     </details>
@@ -352,10 +352,10 @@ async function startCam(){
   try{ stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:"user", width:{ideal: hi?2560:1280}, height:{ideal: hi?2560:1280}}}); }
   catch(e){ toast("카메라를 열 수 없습니다: "+(e.name||e)); return; }
   video.srcObject=stream; try{ await video.play(); }catch(e){}
-  imageCapture=null; photoHi=null; photoTaking=false;
+  imageCapture=null; photoTaking=false; slots=newSlots(); photoMeasTs=null; photoSaved=false; photoFiles=[];
   if(hi && "ImageCapture" in window){ try{ imageCapture=new ImageCapture(stream.getVideoTracks()[0]); }catch(e){ imageCapture=null; } }
   $("home").classList.add("hidden"); $("cam").classList.remove("hidden");
-  REF=personalRef(); lockFrames=[]; frames=[]; photoBest=Infinity; photoMeta=null; photoFileName=null; accMs=0; lastFrameT=0; startT=performance.now(); badSince=0; stillTaken=false; running=true;
+  REF=personalRef(); lockFrames=[]; frames=[]; accMs=0; lastFrameT=0; startT=performance.now(); badSince=0; stillTaken=false; running=true;
   $("prog").style.width="0%"; $("phase").textContent="얼굴을 원 안에 두고 화면 속 내 눈을 바라보세요";
   speak("화면 속 내 눈을 편하게 바라보세요", true);
   requestAnimationFrame(loop);
@@ -393,17 +393,19 @@ function loop(){
     if(c.accept){
       accMs += dt; A.t=accMs; A.score=c.score; frames.push({r:A.r, r2d:A.r2d, q:A.q, t:accMs, score:c.score}); badSince=0;
       $("hint").textContent="좋아요, 그대로 계세요";
-      if($("photoMode").checked && accMs>500 && c.score<photoBest){   // keep the best-posed frame at full camera resolution
-        photoBest=c.score; if(photoCanvas.width!==VW||photoCanvas.height!==VH){ photoCanvas.width=VW; photoCanvas.height=VH; }
-        photoCanvas.getContext("2d").drawImage(video,0,0,VW,VH);
-        photoMeta={pitch:A.q.pitch, yaw:A.q.yaw, roll:A.q.roll, dist:A.q.faceFrac, t:Date.now()};
-      }
-      if(imageCapture && !photoHi && !photoTaking && accMs>1500 && c.score<PHOTO_SCORE){
-        photoTaking=true; const meta={pitch:A.q.pitch, yaw:A.q.yaw, roll:A.q.roll, dist:A.q.faceFrac, t:Date.now()};
-        imageCapture.getPhotoCapabilities().then(cap=>{ const w=cap && cap.imageWidth && cap.imageWidth.max; return imageCapture.takePhoto(w ? {imageWidth:w} : undefined); }, ()=>imageCapture.takePhoto())
-          .then(blob=> (blob && blob.size>0) ? createImageBitmap(blob).then(bmp=>{ photoHi={blob, meta, w:bmp.width, h:bmp.height}; bmp.close(); }) : null)
-          .catch(e=>{ console.warn("takePhoto failed", e); imageCapture=null; })
-          .finally(()=>{ photoTaking=false; });
+      if($("photoMode").checked){
+        const seg=WINDOW_MS/NSHOTS, k=Math.min(NSHOTS-1, Math.floor(accMs/seg)), S=slots[k];
+        if(!photoMeasTs) photoMeasTs=Date.now();
+        const meta={pitch:A.q.pitch, yaw:A.q.yaw, roll:A.q.roll, dist:A.q.faceFrac, t:Date.now()};
+        if(c.score<S.vidScore){ S.vidScore=c.score; if(!S.vid) S.vid=document.createElement("canvas");   // fallback: best video frame of this third
+          if(S.vid.width!==VW||S.vid.height!==VH){ S.vid.width=VW; S.vid.height=VH; } S.vid.getContext("2d").drawImage(video,0,0,VW,VH); S.vmeta=meta; }
+        if(imageCapture && !S.hi && !photoTaking && accMs-k*seg>300 && c.score<PHOTO_SCORE){
+          photoTaking=true;
+          imageCapture.getPhotoCapabilities().then(cap=>{ const w=cap && cap.imageWidth && cap.imageWidth.max; return imageCapture.takePhoto(w ? {imageWidth:w} : undefined); }, ()=>imageCapture.takePhoto())
+            .then(blob=> (blob && blob.size>0) ? createImageBitmap(blob).then(bmp=>{ S.hi={blob, meta, w:bmp.width, h:bmp.height}; bmp.close(); }) : null)
+            .catch(e=>{ console.warn("takePhoto failed", e); imageCapture=null; })
+            .finally(()=>{ photoTaking=false; });
+        }
       }
       if(!stillTaken && accMs>WINDOW_MS*0.4){ const p=$("preview"); p.width=W; p.height=H; p.getContext("2d").drawImage(work,0,0,W,H); lastStill={L:A.L}; stillTaken=true; }
     } else {
@@ -423,8 +425,11 @@ function loop(){
 
 /* ---------- aggregate: 3 segments, best half of frames in each ---------- */
 let lastStill=null, pending=null;
-const photoCanvas=document.createElement("canvas"); let photoBest=Infinity, photoMeta=null, photoFileName=null;
-let imageCapture=null, photoHi=null, photoTaking=false;   // photoHi = {blob, meta, w, h} from the camera's still-photo path
+// photo mode: one measurement = NSHOTS photos, one per third of the 6-s window.
+// Each slot keeps a high-res still (ImageCapture) if possible, else its best-posed video frame.
+const NSHOTS = 3;
+let slots=[], imageCapture=null, photoTaking=false, photoMeasTs=null, photoSaved=false, photoFiles=[];
+function newSlots(){ return Array.from({length:NSHOTS}, ()=>({hi:null, vid:null, vidScore:Infinity, vmeta:null})); }
 function segmentShots(fr){
   const shots=[];
   for(let k=0;k<SEGMENTS;k++){
@@ -439,7 +444,7 @@ function segmentShots(fr){
 }
 async function finish(){
   running=false; const fr=frames.slice();
-  for(let i=0;i<30 && photoTaking;i++) await new Promise(r=>setTimeout(r,100));   // let a pending still photo complete
+  for(let i=0;i<40 && photoTaking;i++) await new Promise(r=>setTimeout(r,100));   // let a pending still photo complete
   stopCam();
   const shots=segmentShots(fr);
   const r={}, r2d={}, cv={}, cv2d={};
@@ -472,36 +477,35 @@ function showResult(){
     const p=pct(P.r[key],key,base);
     return `<tr><td>${label}</td><td>${fmt(mm[key],dpFor(key))} ${unit}</td><td><span class="${cls(P.cv[key])}" style="padding:1px 6px;border-radius:6px">${fmt(P.cv[key],2)}%</span></td><td>${fmt(P.cv2d[key],2)}%</td><td class="${p>0?"pos":"neg"}">${p==null?"–":(p>0?"+":"")+fmt(p)+"%"}</td></tr>`; }).join("");
   $("resNote").textContent=`약 6초 동안 ${P.frames}프레임을 분석해 3구간으로 나누고, 각 구간에서 자세가 가장 바른 프레임들의 중앙값을 냈습니다. "보정후"는 고개 각도를 3D로 보정한 값입니다(면적 지표는 보정 없음).`;
-  $("photoBtn").classList.toggle("hidden", !(photoMeta||photoHi));
-  $("photoBtn").textContent = photoHi ? `표준 사진 내려받기 (고해상도 ${photoHi.w}×${photoHi.h})` : (photoMeta ? `표준 사진 내려받기 (영상 프레임 ${photoCanvas.width}×${photoCanvas.height})` : "표준 사진 내려받기");
+  const nHi=slots.filter(x=>x.hi).length, nAll=slots.filter(x=>x.hi||x.vid).length;
+  $("photoBtn").classList.toggle("hidden", nAll===0);
+  $("photoBtn").textContent = `표준 사진 ${nAll}장 내려받기 (고해상도 ${nHi} · 영상 프레임 ${nAll-nHi})`;
   $("resultCard").classList.remove("hidden"); $("resultCard").scrollIntoView({behavior:"smooth"});
 }
-function photoName(){
-  const M = photoHi ? photoHi.meta : photoMeta;
-  const d=new Date(M.t), p=n=>String(n).padStart(2,"0");
+function photoName(k){
+  const S=slots[k], M=S.hi ? S.hi.meta : S.vmeta, p=n=>String(n).padStart(2,"0");
+  const d=new Date(photoMeasTs);   // same id for all photos of one measurement
   const ts=`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   const ses={"아침":"am","저녁":"pm"}[$("session").value]||"etc", f=v=>(v==null||!isFinite(v))?"0":v.toFixed(1);
-  const src = photoHi ? `hi${photoHi.w}x${photoHi.h}` : `vid${photoCanvas.width}x${photoCanvas.height}`;
-  return `ff_${ts}_${ses}_pitch${f(M.pitch)}_yaw${f(M.yaw)}_roll${f(M.roll)}_dist${f(M.dist)}_gl${$("glasses").checked?1:0}_src${src}.jpg`;
+  const src = S.hi ? `hi${S.hi.w}x${S.hi.h}` : `vid${S.vid.width}x${S.vid.height}`;
+  return `ff_${ts}_${ses}_s${k+1}_pitch${f(M.pitch)}_yaw${f(M.yaw)}_roll${f(M.roll)}_dist${f(M.dist)}_gl${$("glasses").checked?1:0}_src${src}.jpg`;
 }
-function saveBlob(b){
-  const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=photoFileName; a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href),3000); $("photoBtn").textContent="내려받음 ✓"; toast("다운로드 폴더에 사진을 저장했습니다");
-}
+function saveBlobAs(b, name){ const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); }
 function downloadPhoto(){
-  if((!photoMeta && !photoHi) || photoFileName) return;
-  photoFileName=photoName();
-  if(photoHi){ saveBlob(photoHi.blob); return; }
-  photoCanvas.toBlob(b=>{ if(!b){ toast("사진을 만들 수 없습니다"); return; }
-    const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=photoFileName; a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href),3000); $("photoBtn").textContent="내려받음 ✓"; toast("다운로드 폴더에 사진을 저장했습니다"); }, "image/jpeg", 0.95);
+  if(photoSaved) return; const ks=[...Array(NSHOTS).keys()].filter(k=>slots[k].hi||slots[k].vid); if(!ks.length) return;
+  photoSaved=true; photoFiles=ks.map(k=>photoName(k));
+  ks.forEach((k,i)=>setTimeout(()=>{   // spaced out: Chrome may ask once to allow multiple downloads
+    const S=slots[k], name=photoFiles[i];
+    if(S.hi) saveBlobAs(S.hi.blob, name); else S.vid.toBlob(b=>{ if(b) saveBlobAs(b, name); }, "image/jpeg", 0.95);
+  }, i*500));
+  $("photoBtn").textContent=`내려받음 ✓ (${ks.length}장)`; toast(`다운로드 폴더에 사진 ${ks.length}장을 저장합니다`);
 }
 $("photoBtn").addEventListener("click", downloadPhoto);
 $("saveBtn").addEventListener("click", ()=>{
   if(!pending) return;
   downloadPhoto();   // photo mode: the record always points to a saved photo
   const w=parseFloat($("weight").value);
-  records.push({ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", glasses:$("glasses").checked, photoFile:photoFileName, weight:isFinite(w)?w:null, note:$("note").value.trim(), ...pending, v:VERSION });
+  records.push({ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", glasses:$("glasses").checked, photoFile:photoFiles.join(";"), weight:isFinite(w)?w:null, note:$("note").value.trim(), ...pending, v:VERSION });
   persist(); pending=null; $("resultCard").classList.add("hidden"); $("note").value=""; toast("저장했습니다"); renderAll();
 });
 $("discardBtn").addEventListener("click", ()=>{ pending=null; $("resultCard").classList.add("hidden"); });
