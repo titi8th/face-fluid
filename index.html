@@ -89,7 +89,7 @@
         <li>자세가 벗어나면 화면과 음성으로 한 가지씩 알려 줍니다. 가장 중요한 건 <b>턱 높이</b>입니다. 오른쪽 세로 막대의 표시가 초록 구간에 있게 해 주세요.</li>
         <li>이마에 힘을 주지 말고 눈썹을 편하게 둡니다.</li>
         <li>폰과 얼굴의 거리도 매번 비슷해야 합니다. "조금 더 가까이/멀리" 안내가 나오면 팔 길이를 조절하세요.</li>
-        <li>가능하면 같은 장소·조명에서, 안경을 벗고, 머리카락이 볼과 턱선을 가리지 않게 합니다.</li>
+        <li>가능하면 같은 장소·조명에서, <b>안경을 벗고</b>, 머리카락이 볼과 턱선을 가리지 않게 합니다. 안경을 써야 한다면 매번 같은 안경을 쓰고 "안경을 쓴 채로 측정"에 체크하세요.</li>
       </ul>
     </details>
   </div>
@@ -106,6 +106,9 @@
     </div>
     <div class="row" style="margin-top:10px">
       <label>메모 (선택)<input type="text" id="note" maxlength="80" placeholder="예: 전날 라면, 음주, 생리 3일째"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="glasses"> 안경을 쓴 채로 측정 (가능하면 벗고 측정하세요)</label>
     </div>
     <div class="btns">
       <button id="startBtn" disabled>카메라 켜고 측정 시작</button>
@@ -185,6 +188,9 @@ const METRICS = [
   {key:"eyeOpen",    label:"눈 뜬 높이 (참고)",     unit:"mm"},
   {key:"eyeRatio",   label:"눈 높이/너비 (참고)",   unit:""},
   {key:"browLid",    label:"눈썹-윗눈꺼풀 (참고)",  unit:"mm"},
+  {key:"underBulge", label:"눈 밑 돌출 (3D, 참고)", unit:""},
+  {key:"underHeight",label:"눈 밑 높이 (참고)",     unit:"mm"},
+  {key:"underArea",  label:"눈 밑 면적 (참고)",     unit:"cm²"},
 ];
 // frame acceptance (loose) — the rest is corrected or filtered by scoring
 const ACC = {yaw:6, pitchDev:2.5, distDev:5, phoneTilt:12, roll:15, sizeMin:18, sizeMax:75, center:22, browEx:0.3};
@@ -204,8 +210,8 @@ const sd=a=>{const m=mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.
 function median(a){ const b=[...a].sort((x,y)=>x-y), n=b.length; return n?(n%2?b[(n-1)/2]:(b[n/2-1]+b[n/2])/2):null; }
 function fmt(v,dp=1){ return (v==null||!isFinite(v))?"–":v.toFixed(dp); }
 function fmtDate(ts){ const d=new Date(ts), p=n=>String(n).padStart(2,"0"); return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
-const dpFor=k=>(k==="eyeRatio"||k==="fwhr")?3:1;
-const AREA_KEYS=new Set(["faceArea","lowerArea"]), UNITLESS=new Set(["eyeRatio","fwhr"]);
+const dpFor=k=>(k==="eyeRatio"||k==="fwhr"||k==="underBulge")?3:(k==="underArea"?2:1);
+const AREA_KEYS=new Set(["faceArea","lowerArea","underArea"]), UNITLESS=new Set(["eyeRatio","fwhr","underBulge"]);
 
 /* ---------- storage ---------- */
 let records=[]; try{ records=JSON.parse(localStorage.getItem(LS_KEY)||"[]"); }catch(e){ records=[]; }
@@ -247,6 +253,22 @@ function areasFrom(L, ipd, roll){ // 2D areas, roll-corrected, in IPD^2 units
   const oval=FACE_OVAL.map(i=>rot(L[i])), nose=rot(L[1]), u=1/ipd;
   return { faceArea:polyArea(oval)*u*u, lowerArea:polyArea(clipBelow(oval,nose.y))*u*u };
 }
+// lower-eye rings (MediaPipe face mesh): lid line (0) ... infra-orbital/cheek line (3)
+const EYE_LO = {
+  R:{l0:[33,7,163,144,145,153,154,155,133], l1:[130,25,110,24,23,22,26,112,243], l2:[226,31,228,229,230,231,232,233,244], l3:[143,111,117,118,119,120,121,128,245]},
+  L:{l0:[263,249,390,373,374,380,381,382,362], l1:[359,255,339,254,253,252,256,341,463], l2:[446,261,448,449,450,451,452,453,464], l3:[372,340,346,347,348,349,350,357,465]} };
+function underEye(L, ipd){
+  const out={bulge:[],height:[],area:[]};
+  for(const side of ["R","L"]){ const e=EYE_LO[side];
+    const mid=k=>e[k].slice(2,7);                      // central 5 points of each ring
+    const zAvg=idx=>mean(idx.map(i=>L[i].z));
+    out.bulge.push((zAvg(mid("l3")) - (zAvg(mid("l1"))+zAvg(mid("l2")))/2)/ipd);   // + = under-eye sits forward of cheek line
+    out.height.push(mean(mid("l0").map((i,k)=>d2(L[i], L[mid("l3")[k]])))/ipd);
+    const poly=[...e.l0.map(i=>L[i]), ...[...e.l3].reverse().map(i=>L[i])];
+    out.area.push(polyArea(poly)/(ipd*ipd));
+  }
+  return {underBulge:mean(out.bulge), underHeight:mean(out.height), underArea:mean(out.area)};
+}
 function analyzeLandmarks(res, W, H){
   if(!res.faceLandmarks || !res.faceLandmarks.length) return null;
   const L=res.faceLandmarks[0].map(p=>({x:p.x*W, y:p.y*H, z:p.z*W}));
@@ -254,7 +276,7 @@ function analyzeLandmarks(res, W, H){
   const pose = res.facialTransformationMatrixes?.[0] ? eulerFromMatrix(res.facialTransformationMatrixes[0]) : {pitch:0,yaw:0};
   const roll=Math.atan2(L[263].y-L[33].y, L[263].x-L[33].x)*180/Math.PI;
   const irisPx=(d2(L[469],L[471])+d2(L[474],L[476]))/2, ipdPx=d2(L[468],L[473]);
-  const ar = areasFrom(L, ipdPx, roll);
+  const ar = {...areasFrom(L, ipdPx, roll), ...underEye(L, ipdPx)};
   const r2d = {...metricsFrom(L, d2), ...ar};
   const r3d = {...metricsFrom(L, d3), ...ar};   // pose-corrected linear metrics (3D distances)
   const fw=d2(L[234],L[454]);
@@ -397,7 +419,8 @@ function finish(){
   const shots=segmentShots(fr);
   const r={}, r2d={}, cv={}, cv2d={};
   METRICS.forEach(({key})=>{ const v=shots.map(s=>s.r[key]), v2=shots.map(s=>s.r2d[key]);
-    r[key]=median(v); r2d[key]=median(v2); cv[key]=sd(v)/mean(v)*100; cv2d[key]=sd(v2)/mean(v2)*100; });
+    r[key]=median(v); r2d[key]=median(v2);
+    if(key==="underBulge"){ cv[key]=sd(v)*100; cv2d[key]=sd(v2)*100; } else { cv[key]=sd(v)/mean(v)*100; cv2d[key]=sd(v2)/mean(v2)*100; } });
   const q={}; Object.keys(shots[0].q).forEach(k=>{ const v=shots.map(s=>s.q[k]).filter(x=>x!=null&&isFinite(x)); q[k]=v.length?median(v):null; });
   pending={r, r2d, q, cv, cv2d, frames:fr.length};
   speak("측정이 끝났습니다", true);
@@ -407,10 +430,10 @@ function finish(){
 /* ---------- baseline & helpers ---------- */
 function sorted(){ return cur().sort((a,b)=>a.ts-b.ts); }
 function baselineSet(){ return sorted().slice(0,5); }
-function baselineVals(field="r"){ const b=baselineSet(); if(!b.length) return null; const o={}; METRICS.forEach(({key})=>o[key]=median(b.map(r=>r[field][key]))); return o; }
-function pct(v,key,base){ if(!base||!base[key]) return null; return (v/base[key]-1)*100; }
+function baselineVals(field="r"){ const b=baselineSet(); if(!b.length) return null; const o={}; METRICS.forEach(({key})=>o[key]=median(b.map(r=>r[field]?.[key]).filter(v=>v!=null&&isFinite(v)))); return o; }
+function pct(v,key,base){ if(v==null||!isFinite(v)||!base||!base[key]) return null; if(key==="underBulge") return (v-base[key])*100; return (v/base[key]-1)*100; }
 function personalIPD(extra){ const v=sorted().slice(0,10).map(r=>r.q.ipdMmEst).filter(x=>isFinite(x)); if(extra) v.push(extra); return v.length?median(v):63; }
-function toMM(r,ipd){ const o={}; METRICS.forEach(({key})=>{ const v=r[key]; o[key]=UNITLESS.has(key)?v:AREA_KEYS.has(key)?v*ipd*ipd/100:v*ipd; }); return o; }
+function toMM(r,ipd){ const o={}; METRICS.forEach(({key})=>{ const v=r[key]; if(v==null){ o[key]=null; return; } o[key]=UNITLESS.has(key)?v:AREA_KEYS.has(key)?v*ipd*ipd/100:v*ipd; }); return o; }
 
 function showResult(){
   const P=pending;
@@ -429,7 +452,7 @@ function showResult(){
 $("saveBtn").addEventListener("click", ()=>{
   if(!pending) return;
   const w=parseFloat($("weight").value);
-  records.push({ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", weight:isFinite(w)?w:null, note:$("note").value.trim(), ...pending, v:VERSION });
+  records.push({ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", glasses:$("glasses").checked, weight:isFinite(w)?w:null, note:$("note").value.trim(), ...pending, v:VERSION });
   persist(); pending=null; $("resultCard").classList.add("hidden"); $("note").value=""; toast("저장했습니다"); renderAll();
 });
 $("discardBtn").addEventListener("click", ()=>{ pending=null; $("resultCard").classList.add("hidden"); });
@@ -463,7 +486,7 @@ function renderHistory(){
     all.map(r=>{ const old=(r.v||0)<VERSION;
       if(old) return `<tr style="opacity:.5"><td>${fmtDate(r.ts)}</td><td colspan="7" style="text-align:left">이전 방식 기록 (분석에서 제외)</td><td><button class="small danger" data-del="${r.id}">삭제</button></td></tr>`;
       const m=toMM(r.r,ipd), pj=pct(r.r.jawWidth,"jawWidth",base), pf=pct(r.r.faceWidth,"faceWidth",base);
-      return `<tr><td>${fmtDate(r.ts)}</td><td>${r.session}</td><td>${r.weight!=null?fmt(r.weight):"–"}</td><td>${fmt(m.jawWidth)}</td><td class="${pj>0?"pos":"neg"}">${d(pj)}</td><td>${fmt(m.faceWidth)}</td><td class="${pf>0?"pos":"neg"}">${d(pf)}</td><td>${fmt(r.cv?.jawWidth,2)}%</td><td><button class="small danger" data-del="${r.id}">삭제</button></td></tr>`; }).join("");
+      return `<tr><td>${fmtDate(r.ts)}${r.glasses?" 👓":""}</td><td>${r.session}</td><td>${r.weight!=null?fmt(r.weight):"–"}</td><td>${fmt(m.jawWidth)}</td><td class="${pj>0?"pos":"neg"}">${d(pj)}</td><td>${fmt(m.faceWidth)}</td><td class="${pf>0?"pos":"neg"}">${d(pf)}</td><td>${fmt(r.cv?.jawWidth,2)}%</td><td><button class="small danger" data-del="${r.id}">삭제</button></td></tr>`; }).join("");
 }
 function renderAll(){ renderHistory(); drawChart(); }
 $("histTable").addEventListener("click", e=>{ const id=e.target?.dataset?.del; if(!id) return;
@@ -474,8 +497,8 @@ $("histTable").addEventListener("click", e=>{ const id=e.target?.dataset?.del; i
 function toCSV(){
   const ipd=personalIPD(), f=(v,d)=>(v==null||!isFinite(v))?"":v.toFixed(d), esc=s=>`"${String(s??"").replace(/"/g,'""')}"`;
   const K=METRICS.map(m=>m.key);
-  const head=["timestamp","session","weight_kg","note",...K.map(k=>k+"_mm"),...K.map(k=>k+"_ipdratio"),...K.map(k=>k+"_2d_ipdratio"),...K.map(k=>k+"_cv3"),...K.map(k=>k+"_2d_cv3"),"roll_deg","yaw_deg","pitch_deg","blink","smile","jawOpen","browUp","iris_px","ipd_px","ipd_mm_est","face_frac_pct","frames"];
-  const lines=sorted().map(r=>{ const mm=toMM(r.r,ipd); return [new Date(r.ts).toISOString(),r.session,r.weight??"",esc(r.note),
+  const head=["timestamp","session","weight_kg","glasses","note",...K.map(k=>k+"_mm"),...K.map(k=>k+"_ipdratio"),...K.map(k=>k+"_2d_ipdratio"),...K.map(k=>k+"_cv3"),...K.map(k=>k+"_2d_cv3"),"roll_deg","yaw_deg","pitch_deg","blink","smile","jawOpen","browUp","iris_px","ipd_px","ipd_mm_est","face_frac_pct","frames"];
+  const lines=sorted().map(r=>{ const mm=toMM(r.r,ipd); return [new Date(r.ts).toISOString(),r.session,r.weight??"",r.glasses?1:0,esc(r.note),
     ...K.map(k=>f(mm[k],3)),...K.map(k=>f(r.r[k],5)),...K.map(k=>f(r.r2d?.[k],5)),...K.map(k=>f(r.cv?.[k],3)),...K.map(k=>f(r.cv2d?.[k],3)),
     f(r.q.roll,2),f(r.q.yaw,2),f(r.q.pitch,2),f(r.q.blink,3),f(r.q.smile,3),f(r.q.jawOpen,3),f(r.q.browUp,3),f(r.q.irisPx,1),f(r.q.ipdPx,1),f(r.q.ipdMmEst,2),f(r.q.faceFrac,1),r.frames??""].join(","); });
   return "﻿"+[head.join(","),...lines].join("\n");
