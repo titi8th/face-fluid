@@ -89,6 +89,7 @@
         <li>자세가 벗어나면 화면과 음성으로 한 가지씩 알려 줍니다. 가장 중요한 건 <b>턱 높이</b>입니다. 오른쪽 세로 막대의 표시가 초록 구간에 있게 해 주세요.</li>
         <li>이마에 힘을 주지 말고 눈썹을 편하게 둡니다.</li>
         <li>폰과 얼굴의 거리도 매번 비슷해야 합니다. "조금 더 가까이/멀리" 안내가 나오면 팔 길이를 조절하세요.</li>
+        <li>"표준 사진도 저장"을 켜면 6초 중 자세가 가장 바른 순간의 사진 1장을 결과 화면에서 내려받을 수 있습니다(폰의 다운로드 폴더, 서버 전송 없음). 얼굴 나이 분석 노트북에 이 사진들을 올리면 됩니다.</li>
         <li>가능하면 같은 장소·조명에서, <b>안경을 벗고</b>, 머리카락이 볼과 턱선을 가리지 않게 합니다. 안경을 써야 한다면 매번 같은 안경을 쓰고 "안경을 쓴 채로 측정"에 체크하세요.</li>
       </ul>
     </details>
@@ -110,6 +111,9 @@
     <div class="row" style="margin-top:10px">
       <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="glasses"> 안경을 쓴 채로 측정 (가능하면 벗고 측정하세요)</label>
     </div>
+    <div class="row" style="margin-top:6px">
+      <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="photoMode"> 표준 사진도 저장 (얼굴 나이 분석용, 이 폰에만 저장)</label>
+    </div>
     <div class="btns">
       <button id="startBtn" disabled>카메라 켜고 측정 시작</button>
     </div>
@@ -123,6 +127,7 @@
     <p class="note" id="resNote"></p>
     <div class="btns">
       <button id="saveBtn">저장</button>
+      <button class="ghost hidden" id="photoBtn">표준 사진 내려받기</button>
       <button class="ghost" id="discardBtn">버리기</button>
     </div>
   </div>
@@ -346,7 +351,7 @@ async function startCam(){
   catch(e){ toast("카메라를 열 수 없습니다: "+(e.name||e)); return; }
   video.srcObject=stream; try{ await video.play(); }catch(e){}
   $("home").classList.add("hidden"); $("cam").classList.remove("hidden");
-  REF=personalRef(); lockFrames=[]; frames=[]; accMs=0; lastFrameT=0; startT=performance.now(); badSince=0; stillTaken=false; running=true;
+  REF=personalRef(); lockFrames=[]; frames=[]; photoBest=Infinity; photoMeta=null; photoFileName=null; accMs=0; lastFrameT=0; startT=performance.now(); badSince=0; stillTaken=false; running=true;
   $("prog").style.width="0%"; $("phase").textContent="얼굴을 원 안에 두고 화면 속 내 눈을 바라보세요";
   speak("화면 속 내 눈을 편하게 바라보세요", true);
   requestAnimationFrame(loop);
@@ -384,6 +389,11 @@ function loop(){
     if(c.accept){
       accMs += dt; A.t=accMs; A.score=c.score; frames.push({r:A.r, r2d:A.r2d, q:A.q, t:accMs, score:c.score}); badSince=0;
       $("hint").textContent="좋아요, 그대로 계세요";
+      if($("photoMode").checked && accMs>500 && c.score<photoBest){   // keep the best-posed frame at full camera resolution
+        photoBest=c.score; if(photoCanvas.width!==VW||photoCanvas.height!==VH){ photoCanvas.width=VW; photoCanvas.height=VH; }
+        photoCanvas.getContext("2d").drawImage(video,0,0,VW,VH);
+        photoMeta={pitch:A.q.pitch, yaw:A.q.yaw, roll:A.q.roll, dist:A.q.faceFrac, t:Date.now()};
+      }
       if(!stillTaken && accMs>WINDOW_MS*0.4){ const p=$("preview"); p.width=W; p.height=H; p.getContext("2d").drawImage(work,0,0,W,H); lastStill={L:A.L}; stillTaken=true; }
     } else {
       if(!badSince) badSince=now;
@@ -402,6 +412,7 @@ function loop(){
 
 /* ---------- aggregate: 3 segments, best half of frames in each ---------- */
 let lastStill=null, pending=null;
+const photoCanvas=document.createElement("canvas"); let photoBest=Infinity, photoMeta=null, photoFileName=null;
 function segmentShots(fr){
   const shots=[];
   for(let k=0;k<SEGMENTS;k++){
@@ -447,12 +458,28 @@ function showResult(){
     const p=pct(P.r[key],key,base);
     return `<tr><td>${label}</td><td>${fmt(mm[key],dpFor(key))} ${unit}</td><td><span class="${cls(P.cv[key])}" style="padding:1px 6px;border-radius:6px">${fmt(P.cv[key],2)}%</span></td><td>${fmt(P.cv2d[key],2)}%</td><td class="${p>0?"pos":"neg"}">${p==null?"–":(p>0?"+":"")+fmt(p)+"%"}</td></tr>`; }).join("");
   $("resNote").textContent=`약 6초 동안 ${P.frames}프레임을 분석해 3구간으로 나누고, 각 구간에서 자세가 가장 바른 프레임들의 중앙값을 냈습니다. "보정후"는 고개 각도를 3D로 보정한 값입니다(면적 지표는 보정 없음).`;
+  $("photoBtn").classList.toggle("hidden", !photoMeta); $("photoBtn").textContent="표준 사진 내려받기";
   $("resultCard").classList.remove("hidden"); $("resultCard").scrollIntoView({behavior:"smooth"});
 }
+function photoName(){
+  const d=new Date(photoMeta.t), p=n=>String(n).padStart(2,"0");
+  const ts=`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  const ses={"아침":"am","저녁":"pm"}[$("session").value]||"etc", f=v=>(v==null||!isFinite(v))?"0":v.toFixed(1);
+  return `ff_${ts}_${ses}_pitch${f(photoMeta.pitch)}_yaw${f(photoMeta.yaw)}_roll${f(photoMeta.roll)}_dist${f(photoMeta.dist)}_gl${$("glasses").checked?1:0}.jpg`;
+}
+function downloadPhoto(){
+  if(!photoMeta || photoFileName) return;
+  photoFileName=photoName();
+  photoCanvas.toBlob(b=>{ if(!b){ toast("사진을 만들 수 없습니다"); return; }
+    const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=photoFileName; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),3000); $("photoBtn").textContent="내려받음 ✓"; toast("다운로드 폴더에 사진을 저장했습니다"); }, "image/jpeg", 0.95);
+}
+$("photoBtn").addEventListener("click", downloadPhoto);
 $("saveBtn").addEventListener("click", ()=>{
   if(!pending) return;
+  downloadPhoto();   // photo mode: the record always points to a saved photo
   const w=parseFloat($("weight").value);
-  records.push({ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", glasses:$("glasses").checked, weight:isFinite(w)?w:null, note:$("note").value.trim(), ...pending, v:VERSION });
+  records.push({ id:"r"+Date.now(), ts:Date.now(), session:$("session").value, camera:"전면-실시간", glasses:$("glasses").checked, photoFile:photoFileName, weight:isFinite(w)?w:null, note:$("note").value.trim(), ...pending, v:VERSION });
   persist(); pending=null; $("resultCard").classList.add("hidden"); $("note").value=""; toast("저장했습니다"); renderAll();
 });
 $("discardBtn").addEventListener("click", ()=>{ pending=null; $("resultCard").classList.add("hidden"); });
@@ -497,10 +524,10 @@ $("histTable").addEventListener("click", e=>{ const id=e.target?.dataset?.del; i
 function toCSV(){
   const ipd=personalIPD(), f=(v,d)=>(v==null||!isFinite(v))?"":v.toFixed(d), esc=s=>`"${String(s??"").replace(/"/g,'""')}"`;
   const K=METRICS.map(m=>m.key);
-  const head=["timestamp","session","weight_kg","glasses","note",...K.map(k=>k+"_mm"),...K.map(k=>k+"_ipdratio"),...K.map(k=>k+"_2d_ipdratio"),...K.map(k=>k+"_cv3"),...K.map(k=>k+"_2d_cv3"),"roll_deg","yaw_deg","pitch_deg","blink","smile","jawOpen","browUp","iris_px","ipd_px","ipd_mm_est","face_frac_pct","frames"];
+  const head=["timestamp","session","weight_kg","glasses","note",...K.map(k=>k+"_mm"),...K.map(k=>k+"_ipdratio"),...K.map(k=>k+"_2d_ipdratio"),...K.map(k=>k+"_cv3"),...K.map(k=>k+"_2d_cv3"),"roll_deg","yaw_deg","pitch_deg","blink","smile","jawOpen","browUp","iris_px","ipd_px","ipd_mm_est","face_frac_pct","frames","photo_file"];
   const lines=sorted().map(r=>{ const mm=toMM(r.r,ipd); return [new Date(r.ts).toISOString(),r.session,r.weight??"",r.glasses?1:0,esc(r.note),
     ...K.map(k=>f(mm[k],3)),...K.map(k=>f(r.r[k],5)),...K.map(k=>f(r.r2d?.[k],5)),...K.map(k=>f(r.cv?.[k],3)),...K.map(k=>f(r.cv2d?.[k],3)),
-    f(r.q.roll,2),f(r.q.yaw,2),f(r.q.pitch,2),f(r.q.blink,3),f(r.q.smile,3),f(r.q.jawOpen,3),f(r.q.browUp,3),f(r.q.irisPx,1),f(r.q.ipdPx,1),f(r.q.ipdMmEst,2),f(r.q.faceFrac,1),r.frames??""].join(","); });
+    f(r.q.roll,2),f(r.q.yaw,2),f(r.q.pitch,2),f(r.q.blink,3),f(r.q.smile,3),f(r.q.jawOpen,3),f(r.q.browUp,3),f(r.q.irisPx,1),f(r.q.ipdPx,1),f(r.q.ipdMmEst,2),f(r.q.faceFrac,1),r.frames??"",esc(r.photoFile||"")].join(","); });
   return "﻿"+[head.join(","),...lines].join("\n");
 }
 const csvName=()=>"face-fluid-"+new Date().toISOString().slice(0,10)+".csv";
